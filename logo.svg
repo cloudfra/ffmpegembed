@@ -1,0 +1,25 @@
+<svg viewBox="0 0 200 400" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="ufs">
+  <g transform="translate(8,6) scale(0.345)">
+    <g transform="translate(-24.0,-34.0)">
+      
+      <!-- BOTTOM BRICK (Drawn first = Bottom layer) -->
+      <!-- Shifted Y by +120 -->
+      <polygon points="136,348 136,380 256,440.0 256,408.0" fill="#152C55"/>
+      <polygon points="256,408.0 376,348 376,380 256,440.0" fill="#0F2142"/>
+      <polygon points="256,288.0 376,348 256,408.0 136,348" fill="#1C3A6E"/>
+      
+      <!-- MIDDLE BRICK (Drawn second = Middle layer) -->
+      <!-- Shifted Y by +60 -->
+      <polygon points="136,288 136,320 256,380.0 256,348.0" fill="#82B2F7"/>
+      <polygon points="256,348.0 376,288 376,320 256,380.0" fill="#5E97F2"/>
+      <polygon points="256,228.0 376,288 256,348.0 136,288" fill="#ABD0FB"/>
+      
+      <!-- TOP BRICK (Drawn last = Top layer) -->
+      <!-- Y offset 0: Fully visible -->
+      <polygon points="136,228 136,260 256,320.0 256,288.0" fill="#2C56A8"/>
+      <polygon points="256,288.0 376,228 376,260 256,320.0" fill="#21438A"/>
+      <polygon points="256,168.0 376,228 256,288.0 136,228" fill="#3B6BC4"/>
+
+    </g>
+  </g>
+</svg>
