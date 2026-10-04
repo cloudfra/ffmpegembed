@@ -1,4 +1,4 @@
-// Copyright 2026 Jeremy Edwards
+// Copyright 2026 Cloudfra
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,8 +12,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-edition = "2024";
+//go:build !((linux && (amd64 || arm64)) || (windows && (amd64 || arm64)))
 
-package cloudfra.exampleapp;
+package embedded
 
-option go_package = "github.com/cloudfra/exampleapp/proto";
+// This platform has no embedded binary. ffmpeg/ffprobe are left nil and
+// HasEmbedded() stays false; the library can still run if an ffmpeg/ffprobe is
+// available on the system (or supplied inline via Args), which the resolver in
+// the root package handles.
+var (
+	ffmpeg  []byte
+	ffprobe []byte
+)

@@ -12,8 +12,16 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-module github.com/cloudfra/ffmpegembed
+//go:build windows && amd64
 
-go 1.25.0
+package embedded
 
-require google.golang.org/protobuf v1.36.12
+import _ "embed"
+
+//go:embed bin/windows_amd64/ffmpeg.exe
+var ffmpeg []byte
+
+//go:embed bin/windows_amd64/ffprobe.exe
+var ffprobe []byte
+
+func init() { hasEmbedded = true }

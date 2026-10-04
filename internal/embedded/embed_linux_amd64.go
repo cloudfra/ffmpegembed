@@ -12,19 +12,19 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package exampleapp is the starter implementation new services should replace.
-package exampleapp
+//go:build linux && amd64
 
-import "log/slog"
+package embedded
 
-// Args holds the inputs for Run.
-type Args struct {
-	// File that contains the input data.
-	File string
-}
+import _ "embed"
 
-// Run executes the exampleapp application logic.
-func Run(args Args) error {
-	slog.Info("Running exampleapp with file", "file", args.File)
-	return nil
-}
+// ffmpeg and ffprobe are downloaded into bin/linux_amd64 by the Makefile
+// (Makefile_ffmpeg.mk) prior to compilation and embedded below.
+//
+//go:embed bin/linux_amd64/ffmpeg
+var ffmpeg []byte
+
+//go:embed bin/linux_amd64/ffprobe
+var ffprobe []byte
+
+func init() { hasEmbedded = true }

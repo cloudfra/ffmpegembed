@@ -13,11 +13,24 @@
 # limitations under the License.
 
 REGISTRY = ghcr.io/cloudfra
-PROTOS =
+
+# Protobuf messages are generated once and checked in (proto/ffrun.pb.go).
+# `make protos` regenerates them (pulls the protoc toolchain); the app build
+# itself does not depend on them so it works offline against the checked-in
+# generated code.
+PROTOS = proto/ffrun.pb.go
 TEST_ASSETS =
-ASSETS = $(PROTOS)
-GO_PACKAGE = github.com/cloudfra/template-go
-ALL_APPS = exampleapp
+ASSETS =
+GO_PACKAGE = github.com/cloudfra/ffmpegembed
+ALL_APPS = ffrun
 PRODUCTION=1
 
+# Default entry point: build the app (which pulls the host's embedded binary).
+.DEFAULT_GOAL := all
+
+include Makefile_ffmpeg.mk
 include Makefile_build.mk
+
+# Build entry points pull the current host's embedded ffmpeg/ffprobe first so
+# go:embed resolves. (Cross platforms are covered by `make ffembed`.)
+all: ffembed-host

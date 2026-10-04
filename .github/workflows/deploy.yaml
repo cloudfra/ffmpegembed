@@ -157,11 +157,11 @@ jobs:
           files: |
             LICENSE
             build/packages/release.tar.gz
-            build/release/exampleapp-darwin_arm64
-            build/release/exampleapp-linux_amd64
-            build/release/exampleapp-linux_arm64
-            build/release/exampleapp-windows_amd64.exe
-            build/release/exampleapp-windows_arm64.exe
+            build/release/ffrun-darwin_arm64
+            build/release/ffrun-linux_amd64
+            build/release/ffrun-linux_arm64
+            build/release/ffrun-windows_amd64.exe
+            build/release/ffrun-windows_arm64.exe
 
       - name: Login to GitHub Container Registry
         # https://github.com/docker/login-action#github-packages-docker-registry

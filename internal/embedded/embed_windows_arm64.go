@@ -12,22 +12,16 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package exampleapp
+//go:build windows && arm64
 
-import (
-	"testing"
-)
+package embedded
 
-func TestRun(t *testing.T) {
-	if err := Run(Args{}); err != nil {
-		t.Errorf("Run() failed, %s", err)
-	}
-}
+import _ "embed"
 
-func BenchmarkRun(b *testing.B) {
-	for b.Loop() {
-		if err := Run(Args{}); err != nil {
-			b.Errorf("Run() failed, %s", err)
-		}
-	}
-}
+//go:embed bin/windows_arm64/ffmpeg.exe
+var ffmpeg []byte
+
+//go:embed bin/windows_arm64/ffprobe.exe
+var ffprobe []byte
+
+func init() { hasEmbedded = true }

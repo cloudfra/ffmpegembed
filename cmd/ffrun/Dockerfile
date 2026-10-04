@@ -12,9 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-ARG WINDOWS_VERSION=1809
-
-FROM mcr.microsoft.com/windows/nanoserver:${WINDOWS_VERSION}
+FROM --platform=$BUILDPLATFORM gcr.io/distroless/static:nonroot
 
 ARG BUILD_DATE
 ARG VCS_REF
@@ -22,20 +20,19 @@ ARG BUILD_VERSION
 ARG BINARY_NAME
 ARG BINARY_PATH
 
-COPY ${BINARY_PATH} /app/exampleapp.exe
-COPY LICENSE /app/LICENSE
+WORKDIR /app/
 
-# hadolint ignore=DL3066
-USER ContainerUser
-EXPOSE 80
-ENTRYPOINT ["/app/exampleapp.exe"]
+COPY --chown=nonroot $BINARY_PATH /app/ffrun
+COPY --chown=nonroot LICENSE /app/LICENSE
+
+ENTRYPOINT ["/app/ffrun"]
 
 # Standardized Docker Image Labels
 # https://github.com/opencontainers/image-spec/blob/master/annotations.md
 LABEL \
     org.opencontainers.image.created="${BUILD_DATE}" \
     org.opencontainers.image.authors="Cloudfra <cloudfra@googlegroups.com>" \
-    org.opencontainers.image.url="https://github.com/cloudfra/exampleapp" \
+    org.opencontainers.image.url="https://github.com/cloudfra/ffrun" \
     org.opencontainers.image.documentation="https://github.com/cloudfra/template-go" \
     org.opencontainers.image.source="https://github.com/cloudfra/template-go" \
     org.opencontainers.image.version="${BUILD_VERSION}" \

@@ -26,7 +26,7 @@ changing:
 make lint   # gofmt/go vet, gofumpt, golangci-lint, revive, hadolint,
             # actionlint, govulncheck, tflint/terraform fmt
 make test   # unit test suite
-make run    # build and run the exampleapp binary
+make run    # build and run the ffrun binary
 ```
 
 See the "Common make targets" table in the [README](README.md#common-make-targets)
