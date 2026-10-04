@@ -20,8 +20,9 @@ without requiring a copy installed on the host system.
   verbatim. Output is always structured.
 - **Progress monitoring** — parse `ffmpeg -progress pipe:1` and stream
   structured progress events to a callback while the job runs.
-- **Multi-platform** — shipped for `linux/{amd64,arm64}` and
-  `windows/{amd64,arm64}` (see [Platforms](#supported-platforms)).
+- **Multi-platform** — shipped for `linux/{amd64,arm64,386,arm}`,
+  `windows/{amd64,arm64}`, and `darwin/{amd64,arm64}` (see
+  [Platforms](#supported-platforms)).
 
 ## Install
 
@@ -125,38 +126,62 @@ See `./ffrun help` for the full flag reference.
 
 ## Supported platforms
 
-| OS      | Arch  | Binary                       | Source asset (BtbN)            |
-| ------- | ----- | ---------------------------- | ------------------------------ |
-| linux   | amd64 | `ffmpeg`, `ffprobe`          | `…-linux64-gpl-<ver>.tar.xz`  |
-| linux   | arm64 | `ffmpeg`, `ffprobe`          | `…-linuxarm64-gpl-<ver>.tar.xz` |
-| windows | amd64 | `ffmpeg.exe`, `ffprobe.exe`  | `…-win64-gpl-<ver>.zip`       |
-| windows | arm64 | `ffmpeg.exe`, `ffprobe.exe`  | `…-winarm64-gpl-<ver>.zip`    |
+| OS      | Arch  | Binaries                    | Source (master build)                            |
+| ------- | ----- | --------------------------- | ------------------------------------------------ |
+| linux   | amd64 | `ffmpeg`, `ffprobe`          | BtbN `ffmpeg-master-latest-linux64-gpl.tar.xz`   |
+| linux   | arm64 | `ffmpeg`, `ffprobe`          | BtbN `ffmpeg-master-latest-linuxarm64-gpl.tar.xz` |
+| linux   | 386   | `ffmpeg`, `ffprobe`          | eugeneware `ffmpeg`/`ffprobe`-`linux-ia32.gz`     |
+| linux   | arm   | `ffmpeg`, `ffprobe`          | eugeneware `ffmpeg`/`ffprobe`-`linux-arm.gz`      |
+| windows | amd64 | `ffmpeg.exe`, `ffprobe.exe`  | BtbN `ffmpeg-master-latest-win64-gpl.zip`         |
+| windows | arm64 | `ffmpeg.exe`, `ffprobe.exe`  | BtbN `ffmpeg-master-latest-winarm64-gpl.zip`      |
+| darwin  | amd64 | `ffmpeg`, `ffprobe`          | eugeneware `ffmpeg`/`ffprobe`-`darwin-x64.gz`    |
+| darwin  | arm64 | `ffmpeg`, `ffprobe`          | eugeneware `ffmpeg`/`ffprobe`-`darwin-arm64.gz`  |
 
-The binaries are pulled from
-[BtbN/FFmpeg-Builds](https://github.com/BtbN/FFmpeg-Builds) at build time and
-embedded under `internal/embedded/bin/<os>_<arch>/` — that directory is in
-`.gitignore`; only the Go sources are checked in.
+All builds are the rolling **"master"/"latest"** track (no version is pinned)
+from the canonical static-build hosts linked on
+[ffmpeg.org's download page](https://ffmpeg.org/download.html):
+[BtbN/FFmpeg-Builds](https://github.com/BtbN/FFmpeg-Builds) for linux + windows
+and [eugeneware/ffmpeg-static](https://github.com/eugeneware/ffmpeg-static) for
+darwin and the linux 32-bit builds. `make ffembed` re-pulls the current build
+on every run; the binaries
+land under `internal/embedded/bin/<os>_<arch>/` (gitignored) via `go:embed`, so
+only the Go sources are checked in.
 
 ## Building
 
 | Target                    | Description                                                        |
 | ------------------------- | ------------------------------------------------------------------ |
 | `make` / `make all`       | Build the `ffrun` binary for the host (pulls the host's binary first) |
-| `make ffembed`            | Fetch + embed `ffmpeg`/`ffprobe` for all four target platforms      |
+| `make ffembed`            | Fetch + embed `ffmpeg`/`ffprobe` for all six target platforms       |
 | `make ffembed-host`       | Fetch + embed for the current host platform only                    |
 | `make ffembed-clean`      | Remove the embedded binary blobs (re-download on next build)        |
-| `make ffembed-list`       | Print the resolved asset URLs                                       |
 | `make test`               | Run the test suite                                                  |
 | `make protos`             | Regenerate `proto/*.pb.go` from `proto/*.proto` (needs protoc)      |
 | `make release-binaries`   | Build release artifacts for all platforms                           |
 | `make images`             | Build multi-arch Docker images for apps under `cmd/`                |
 | `make clean`              | Remove build outputs                                                |
 
-Override the fetched build via environment variables:
+To pin a specific release (instead of the master build) or point at a local
+archive, override the per-platform URL variables or the downloader itself:
 
 ```bash
-make ffembed FF_VERSION=9.0 FF_LICENSE=lgpl
+make ffembed \
+  FF_FFURL_linux_amd64=https://your.example/ffmpeg-9.0-gpl.tar.xz \
+  FF_FPURL_linux_amd64=https://your.example/ffmpeg-9.0-gpl.tar.xz
+# or swap the download tool:
+make ffembed FF_DL="wget -q -O"
 ```
+
+### Reporting the ffmpeg version
+
+`Ffexec` reports which build is actually in use:
+
+```go
+v,  _ := ffexec.Version()          // e.g. "ffmpeg version N-127197-gf0c2c00a62-20261004 …"
+pv, _ := ffexec.FfprobeVersion()   // the matching ffprobe line
+```
+
+The `ffrun` CLI exposes the same: `ffrun version`.
 
 ## Project layout
 

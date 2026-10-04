@@ -12,15 +12,19 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//go:build !((linux && (amd64 || arm64 || 386 || arm)) || (windows && (amd64 || arm64)) || (darwin && (amd64 || arm64)))
+//go:build darwin && arm64
 
 package embedded
 
-// This platform has no embedded binary. ffmpeg/ffprobe are left nil and
-// HasEmbedded() stays false; the library can still run if an ffmpeg/ffprobe is
-// available on the system (or supplied inline via Args), which the resolver in
-// the root package handles.
-var (
-	ffmpeg  []byte
-	ffprobe []byte
-)
+import _ "embed"
+
+// ffmpeg and ffprobe are downloaded into bin/darwin_arm64 by the Makefile
+// (Makefile_ffmpeg.mk) prior to compilation and embedded below.
+//
+//go:embed bin/darwin_arm64/ffmpeg
+var ffmpeg []byte
+
+//go:embed bin/darwin_arm64/ffprobe
+var ffprobe []byte
+
+func init() { hasEmbedded = true }

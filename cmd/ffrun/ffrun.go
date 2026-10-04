@@ -54,9 +54,10 @@ Usage:
   ffrun [global flags] <subcommand> [subcommand flags] [raw args...]
 
 Sub-commands:
-  probe   Run ffprobe and print the structured FfProbeResult as JSON.
-  run     Run an ffmpeg conversion and print the structured FfmpegResult as JSON
-          (progress is streamed to stderr).
+  probe    Run ffprobe and print the structured FfProbeResult as JSON.
+  run      Run an ffmpeg conversion and print the structured FfmpegResult as JSON
+           (progress is streamed to stderr).
+  version  Print the version of the ffmpeg/ffprobe in use.
 
 Global flags:
   -external     Prefer an ffmpeg/ffprobe found on PATH (default: true); fall
@@ -117,6 +118,8 @@ func run(args []string) error {
 		return cmdProbe(ffexec, subArgs)
 	case "run":
 		return cmdRun(ffexec, subArgs)
+	case "version":
+		return cmdVersion(ffexec)
 	case "probe-path", "ffmpeg", "ffprobe":
 		// Convenience: report which binary the resolved handle points at.
 		fmt.Println(ffexec.FfmpegPath())
@@ -239,6 +242,20 @@ func cmdRun(ffexec *ffmpegembed.Ffexec, args []string) error {
 		result = &ffmpegembed.FfmpegResult{Output: fa.Output}
 	}
 	return emitJSON(result)
+}
+
+// cmdVersion prints the version of the ffmpeg (and ffprobe) the resolved
+// handle is using.
+func cmdVersion(ffexec *ffmpegembed.Ffexec) error {
+	ver, err := ffexec.Version()
+	if err != nil {
+		return err
+	}
+	fmt.Println(ver)
+	if pver, perr := ffexec.FfprobeVersion(); perr == nil {
+		fmt.Println(pver)
+	}
+	return nil
 }
 
 // emitJSON marshals a proto message to indented protoJSON on stdout.

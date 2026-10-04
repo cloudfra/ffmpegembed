@@ -18,6 +18,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -238,4 +239,32 @@ func TestNewEmbeddedResolutionAndClose(t *testing.T) {
 	if err := f.Close(); err != nil {
 		t.Errorf("double Close error: %v", err)
 	}
+}
+
+// TestFfexecVersion verifies Ffexec.Version()/FfprobeVersion() return a
+// non-empty "…version…" line for the resolved binaries.
+func TestFfexecVersion(t *testing.T) {
+	f, err := New(&Args{})
+	if err != nil {
+		t.Skipf("no ffmpeg/ffprobe available on host; skipping: %v", err)
+	}
+	defer f.Close()
+
+	ver, err := f.Version()
+	if err != nil {
+		t.Fatalf("Version() error: %v", err)
+	}
+	if ver == "" || !strings.Contains(ver, "version") {
+		t.Errorf("Version() did not look like a version line: %q", ver)
+	}
+
+	pver, perr := f.FfprobeVersion()
+	if perr != nil {
+		t.Logf("FfprobeVersion() error (non-fatal): %v", perr)
+	} else if pver == "" || !strings.Contains(pver, "version") {
+		t.Errorf("FfprobeVersion() did not look like a version line: %q", pver)
+	}
+
+	t.Logf("ffmpeg:  %s", ver)
+	t.Logf("ffprobe: %s", pver)
 }

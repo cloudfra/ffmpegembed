@@ -167,6 +167,31 @@ func (f *Ffexec) FfmpegPath() string { return f.ffmpegPath }
 // FfprobePath returns the resolved path to the ffprobe executable.
 func (f *Ffexec) FfprobePath() string { return f.ffprobePath }
 
+// FfmpegVersion runs the resolved ffmpeg with -version and returns the first
+// line of its output (for example "ffmpeg version 7.1.1 ...", or a rolling
+// master "N-12XXXX-<gitsha>-<date>" string). It is a cheap way to report which
+// ffmpeg build is in use; it errors if the binary cannot be executed.
+func (f *Ffexec) FfmpegVersion() (string, error) {
+	out, err := exec.Command(f.ffmpegPath, "-version").Output()
+	if err != nil {
+		return "", fmt.Errorf("ffmpeg -version: %w", err)
+	}
+	return firstLine(string(out)), nil
+}
+
+// FfprobeVersion is analogous to FfmpegVersion for ffprobe.
+func (f *Ffexec) FfprobeVersion() (string, error) {
+	out, err := exec.Command(f.ffprobePath, "-version").Output()
+	if err != nil {
+		return "", fmt.Errorf("ffprobe -version: %w", err)
+	}
+	return firstLine(string(out)), nil
+}
+
+// Version reports the version of the ffmpeg in use. It is a convenience alias
+// for FfmpegVersion.
+func (f *Ffexec) Version() (string, error) { return f.FfmpegVersion() }
+
 // Close releases the resolved resources, removing any temp directory created
 // during New. It is safe to call more than once and from deferred calls.
 func (f *Ffexec) Close() error {
@@ -184,4 +209,16 @@ func exeName(name string) string {
 		return name + ".exe"
 	}
 	return name
+}
+
+// firstLine returns the first non-empty, trimmed line of s (or "" if there is
+// none); it is used to extract the leading "ffmpeg version ..." line from the
+// output of `ffmpeg -version`.
+func firstLine(s string) string {
+	for _, ln := range strings.Split(s, "\n") {
+		if t := strings.TrimRight(ln, "\r"); strings.TrimSpace(t) != "" {
+			return strings.TrimSpace(t)
+		}
+	}
+	return ""
 }
