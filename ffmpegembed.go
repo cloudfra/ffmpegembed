@@ -45,6 +45,7 @@
 package ffmpegembed
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -56,20 +57,27 @@ import (
 	"github.com/cloudfra/ffmpegembed/proto"
 )
 
-// Public type aliases over the generated protobuf messages, so that callers can
-// write ffmpegembed.Args, ffmpegembed.FfmpegArgs, etc. without importing the
-// proto package directly.
 type (
-	Args          = proto.Args
-	FfProbeArgs   = proto.FfProbeArgs
+	// Args is an alias for the proto package's Args message.
+	Args = proto.Args
+	// FfProbeArgs is an alias for the proto package's FfProbeArgs message.
+	FfProbeArgs = proto.FfProbeArgs
+	// FfProbeResult is an alias for the proto package's FfProbeResult message.
 	FfProbeResult = proto.FfProbeResult
+	// FfProbeStream is an alias for the proto package's FfProbeStream message.
 	FfProbeStream = proto.FfProbeStream
+	// FfProbeFormat is an alias for the proto package's FfProbeFormat message.
 	FfProbeFormat = proto.FfProbeFormat
-	FfmpegArgs    = proto.FfmpegArgs
-	FfmpegResult  = proto.FfmpegResult
-	Progress      = proto.Progress
-	Event         = proto.Event
-	FfmpegState   = proto.FfmpegState
+	// FfmpegArgs is an alias for the proto package's FfmpegArgs message.
+	FfmpegArgs = proto.FfmpegArgs
+	// FfmpegResult is an alias for the proto package's FfmpegResult message.
+	FfmpegResult = proto.FfmpegResult
+	// Progress is an alias for the proto package's Progress message.
+	Progress = proto.Progress
+	// Event is an alias for the proto package's Event message.
+	Event = proto.Event
+	// FfmpegState is an alias for the proto package's FfmpegState type.
+	FfmpegState = proto.FfmpegState
 )
 
 // Ffexec is a handle to a resolved ffmpeg/ffprobe, created by New. It is
@@ -92,7 +100,7 @@ func New(args *Args) (*Ffexec, error) {
 
 	ensureDir := func() (string, error) {
 		if dir != "" {
-			if err := os.MkdirAll(dir, 0o755); err != nil {
+			if err := os.MkdirAll(dir, 0o750); err != nil {
 				return "", err
 			}
 			return dir, nil
@@ -111,7 +119,7 @@ func New(args *Args) (*Ffexec, error) {
 			return "", err
 		}
 		p := filepath.Join(d, exeName(name))
-		if err := os.WriteFile(p, data, 0o755); err != nil {
+		if err := os.WriteFile(p, data, 0o700); err != nil { //nolint:gosec // G306: extract an executable (owner-only, 0700) into a private temp dir
 			return "", err
 		}
 		return p, nil
@@ -172,7 +180,7 @@ func (f *Ffexec) FfprobePath() string { return f.ffprobePath }
 // master "N-12XXXX-<gitsha>-<date>" string). It is a cheap way to report which
 // ffmpeg build is in use; it errors if the binary cannot be executed.
 func (f *Ffexec) FfmpegVersion() (string, error) {
-	out, err := exec.Command(f.ffmpegPath, "-version").Output()
+	out, err := exec.CommandContext(context.Background(), f.ffmpegPath, "-version").Output() //nolint:gosec // G204: fixed, trusted binary with a constant -version argument
 	if err != nil {
 		return "", fmt.Errorf("ffmpeg -version: %w", err)
 	}
@@ -181,7 +189,7 @@ func (f *Ffexec) FfmpegVersion() (string, error) {
 
 // FfprobeVersion is analogous to FfmpegVersion for ffprobe.
 func (f *Ffexec) FfprobeVersion() (string, error) {
-	out, err := exec.Command(f.ffprobePath, "-version").Output()
+	out, err := exec.CommandContext(context.Background(), f.ffprobePath, "-version").Output() //nolint:gosec // G204: fixed, trusted binary with a constant -version argument
 	if err != nil {
 		return "", fmt.Errorf("ffprobe -version: %w", err)
 	}

@@ -111,7 +111,11 @@ func run(args []string) error {
 	if err != nil {
 		return fmt.Errorf("resolve ffmpeg/ffprobe: %w", err)
 	}
-	defer ffexec.Close()
+	defer func() {
+		if cerr := ffexec.Close(); cerr != nil {
+			fmt.Fprintf(os.Stderr, "closing ffmpeg session: %v\n", cerr)
+		}
+	}()
 
 	switch sub {
 	case "probe":
@@ -203,7 +207,7 @@ func cmdRun(ffexec *ffmpegembed.Ffexec, args []string) error {
 		Output:     *output,
 		VideoCodec: *videoCodec,
 		AudioCodec: *audioCodec,
-		Crf:        int32(*crf),
+		Crf:        int32(*crf), //nolint:gosec // G115: CRF is a small CLI value (0-51 range)
 		Preset:     *preset,
 		Bitrate:    *bitrate,
 		Faststart:  *faststart,

@@ -214,7 +214,11 @@ func TestNewEmbeddedResolutionAndClose(t *testing.T) {
 	if err != nil {
 		t.Skipf("no embedded binary on host; skipping: %v", err)
 	}
-	defer f.Close()
+	defer func() {
+		if cerr := f.Close(); cerr != nil {
+			t.Errorf("Close: %v", cerr)
+		}
+	}()
 
 	for _, p := range []string{f.FfmpegPath(), f.FfprobePath()} {
 		if p == "" {
@@ -231,7 +235,9 @@ func TestNewEmbeddedResolutionAndClose(t *testing.T) {
 
 	dir := filepath.Dir(f.FfmpegPath())
 	before := dir
-	f.Close()
+	if cerr := f.Close(); cerr != nil {
+		t.Fatalf("Close: %v", cerr)
+	}
 	if _, err := os.Stat(before); err == nil {
 		t.Errorf("temp dir not removed on Close: %s", before)
 	}
@@ -248,7 +254,11 @@ func TestFfexecVersion(t *testing.T) {
 	if err != nil {
 		t.Skipf("no ffmpeg/ffprobe available on host; skipping: %v", err)
 	}
-	defer f.Close()
+	defer func() {
+		if cerr := f.Close(); cerr != nil {
+			t.Errorf("Close: %v", cerr)
+		}
+	}()
 
 	ver, err := f.Version()
 	if err != nil {

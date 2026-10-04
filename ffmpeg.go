@@ -17,6 +17,7 @@ package ffmpegembed
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"os/exec"
@@ -110,7 +111,7 @@ func (f *Ffexec) Ffmpeg(args *FfmpegArgs) (*FfmpegRun, error) {
 	}
 
 	full := append(append([]string{}, ffmpegProgressFlags...), userArgs...)
-	cmd := exec.Command(f.ffmpegPath, full...)
+	cmd := exec.CommandContext(context.Background(), f.ffmpegPath, full...) //nolint:gosec // G204: ffmpeg is a fixed, trusted binary; all args come from the library's own API
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
@@ -230,7 +231,7 @@ func (r *FfmpegRun) readProgress(stdout io.Reader) {
 	}
 	if werr != nil {
 		if ee, ok := werr.(*exec.ExitError); ok {
-			result.ExitCode = int32(ee.ExitCode())
+			result.ExitCode = int32(ee.ExitCode()) //nolint:gosec // G115: process exit codes fit in int32
 		}
 		if r.stderr != nil {
 			result.Error = tail(r.stderr.String(), 4096)

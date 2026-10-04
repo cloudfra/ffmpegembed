@@ -15,6 +15,7 @@
 package ffmpegembed
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os/exec"
@@ -83,7 +84,7 @@ func (f *Ffexec) Ffprobe(args *FfProbeArgs) (*FfProbeResult, error) {
 		return nil, fmt.Errorf("ffprobe: no input provided")
 	}
 
-	cmd := exec.Command(f.ffprobePath, buildFfProbeArgs(args)...)
+	cmd := exec.CommandContext(context.Background(), f.ffprobePath, buildFfProbeArgs(args)...) //nolint:gosec // G204: ffprobe is a fixed, trusted binary; all args come from the library's own API
 	var stdout, stderr strings.Builder
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -167,7 +168,7 @@ func parseFfprobe(data string) (*FfProbeResult, error) {
 }
 
 // toProto flattens a parsed stream into the FfProbeStream message.
-func (s jsonStream) toProto(rawJson string) *FfProbeStream {
+func (s jsonStream) toProto(rawJSON string) *FfProbeStream {
 	out := &FfProbeStream{
 		Index:          numberToString(s.Index),
 		CodecName:      s.CodecName,
@@ -189,13 +190,13 @@ func (s jsonStream) toProto(rawJson string) *FfProbeStream {
 		BitsPerSample:  s.BitsPerSample,
 		Settings:       s.Settings,
 		Tags:           toStringMap(s.Tags),
-		RawJson:        rawJson,
+		RawJson:        rawJSON,
 	}
 	return out
 }
 
 // toProto flattens a parsed format into the FfProbeFormat message.
-func (f jsonFormat) toProto(rawJson string) *FfProbeFormat {
+func (f jsonFormat) toProto(rawJSON string) *FfProbeFormat {
 	return &FfProbeFormat{
 		Filename:       f.Filename,
 		FileSize:       numberToInt64(f.Size),
@@ -205,7 +206,7 @@ func (f jsonFormat) toProto(rawJson string) *FfProbeFormat {
 		Duration:       parseFloat(f.Duration),
 		BitRate:        numberToInt64(f.BitRate),
 		Tags:           toStringMap(f.Tags),
-		RawJson:        rawJson,
+		RawJson:        rawJSON,
 	}
 }
 

@@ -185,7 +185,7 @@ The `ffrun` CLI exposes the same: `ffrun version`.
 
 ## Project layout
 
-```
+```text
 .
 ├── ffmpegembed.go     Package: Ffexec, New/Close, binary resolution
 ├── ffmpeg.go          FfmpegRun, progress reader, event dispatch

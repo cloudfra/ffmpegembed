@@ -34,8 +34,8 @@ func parseProgress(sample map[string]string) *proto.Progress {
 		Bitrate:    parseBitrate(sample["bitrate"]),
 		OutTimeUs:  parseInt(sample["out_time_us"]),
 		TotalSize:  parseInt(sample["total_size"]),
-		DropFrames: int32(parseInt(sample["drop_frames"])),
-		DupFrames:  int32(parseInt(sample["dup_frames"])),
+		DropFrames: int32(parseInt(sample["drop_frames"])), //nolint:gosec // G115: frame counters are small in practice
+		DupFrames:  int32(parseInt(sample["dup_frames"])),  //nolint:gosec // G115: frame counters are small in practice
 		OutputTime: parseOutTime(sample["out_time"]),
 	}
 
@@ -90,10 +90,7 @@ func parseOutTime(s string) float64 {
 	if len(parts) != 3 {
 		return 0
 	}
-	h, _ := strconv.ParseFloat(parts[0], 64)
-	m, _ := strconv.ParseFloat(parts[1], 64)
-	sl := parseFloatPtr(&parts[2])
-	return h*3600 + m*60 + sl
+	return parseFloat(parts[0])*3600 + parseFloat(parts[1])*60 + parseFloat(parts[2])
 }
 
 func parseFloat(s string) float64 {

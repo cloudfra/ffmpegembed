@@ -29,8 +29,8 @@ make test   # unit test suite
 make run    # build and run the ffrun binary
 ```
 
-See the "Common make targets" table in the [README](README.md#common-make-targets)
-for the rest (benchmarks, Terraform tests, Docker images, etc.).
+See the make-targets table in the [README's Building section](README.md#building)
+for the rest (release binaries, Docker images, proto regeneration, etc.).
 
 ## Adding a new `cmd/` binary
 
