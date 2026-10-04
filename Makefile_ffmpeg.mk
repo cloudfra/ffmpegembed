@@ -128,10 +128,20 @@ $(FF_EMBED)/%/.done:
 			*.tar.xz) $(FF_DL) -o "$$work/a.txz"  "$$ffurl" && ( cd "$$work" && tar xJf a.txz ) ;; \
 			*) echo "  [ffmpeg] unsupported archive type for $*: $$ffurl" >&2; exit 1 ;; \
 		esac; \
-		bindir="$$(cd "$$work" && find . -type f -name "ffmpeg$$exe" -print -quit)"; \
-		bindir="$$(dirname "$$bindir")"; \
-		cp "$$work/$$bindir/ffmpeg$$exe"  "$$dest/ffmpeg$$exe"; \
-		cp "$$work/$$bindir/ffprobe$$exe" "$$dest/ffprobe$$exe"; \
+		# Locate the extracted bin/ with a glob, not `find`: on the Windows
+		# self-hosted runner (Git Bash) there is no GNU find, so a bare `find`
+		# resolves to C:\Windows\System32\find.exe (Windows FIND) and errors on
+		# -type/-name/-print. Both BtbN archives extract to <top>/bin, so a
+		# single-level glob over the work dir finds it without any external cmd.
+		bindir=""; \
+		for d in "$$work"/*/bin "$$work"/bin; do \
+			if [ -f "$$d/ffmpeg$$exe" ]; then bindir="$$d"; break; fi; \
+		done; \
+		if [ -z "$$bindir" ]; then \
+			echo "  [ffmpeg] could not locate ffmpeg$$exe under $$work" >&2; exit 1; \
+		fi; \
+		cp "$$bindir/ffmpeg$$exe"  "$$dest/ffmpeg$$exe"; \
+		cp "$$bindir/ffprobe$$exe" "$$dest/ffprobe$$exe"; \
 	fi; \
 	chmod +x "$$dest/ffmpeg$$exe" "$$dest/ffprobe$$exe"; \
 	rm -rf "$$work"; \
