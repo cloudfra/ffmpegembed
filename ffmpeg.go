@@ -93,6 +93,13 @@ type FfmpegRun struct {
 	cmd    *exec.Cmd
 	stderr *bytes.Buffer
 
+	// cancel stops the underlying process context; cancelled records that a
+	// cancellation was requested so readProgress can classify the resulting
+	// Wait error as ErrCancelled. Both are guarded by mu (cancel is set once,
+	// at construction).
+	cancel    context.CancelFunc
+	cancelled bool
+
 	events   chan *Event
 	runDone  chan struct{}
 	onUpdate func(*Event)
@@ -116,14 +123,19 @@ func (f *Ffexec) Ffmpeg(args *FfmpegArgs) (*FfmpegRun, error) {
 
 	userArgs := buildFfmpegArgs(args)
 	if len(userArgs) == 0 {
-		return nil, fmt.Errorf("ffmpeg: no inputs or raw_args provided")
+		return nil, fmt.Errorf("ffmpeg: %w (no inputs or raw_args provided)", ErrInvalidArgs)
 	}
 
 	full := append(append([]string{}, ffmpegProgressFlags...), userArgs...)
-	cmd := exec.CommandContext(context.Background(), f.ffmpegPath, full...) //nolint:gosec // G204: ffmpeg is a fixed, trusted binary; all args come from the library's own API
+
+	// A cancellable context lets FfmpegRun.Cancel() stop the process and lets
+	// readProgress classify the resulting Wait error as ErrCancelled.
+	ctx, cancel := context.WithCancel(context.Background())
+	cmd := exec.CommandContext(ctx, f.ffmpegPath, full...) //nolint:gosec // G204: ffmpeg is a fixed, trusted binary; all args come from the library's own API
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
+		cancel()
 		return nil, fmt.Errorf("ffmpeg: stdout pipe: %w", err)
 	}
 	stderr := &bytes.Buffer{}
@@ -135,13 +147,15 @@ func (f *Ffexec) Ffmpeg(args *FfmpegArgs) (*FfmpegRun, error) {
 	durationUs := probeInputDurationUs(f, args.GetInputs())
 
 	if err := cmd.Start(); err != nil {
-		return nil, fmt.Errorf("ffmpeg: start: %w", err)
+		cancel()
+		return nil, startError("ffmpeg", f.ffmpegPath, err)
 	}
 
 	run := &FfmpegRun{
 		c:       f,
 		cmd:     cmd,
 		stderr:  stderr,
+		cancel:  cancel,
 		events:  make(chan *Event, 256),
 		runDone: make(chan struct{}),
 		outFile: args.GetOutput(),
@@ -163,9 +177,23 @@ func (r *FfmpegRun) OnUpdate(cb func(*Event)) {
 	r.mu.Unlock()
 }
 
+// Cancel stops the run: it cancels the process context, which kills the
+// underlying ffmpeg process. It is idempotent and safe to call concurrently,
+// before Wait, or after the run has already finished (in which case it has no
+// effect). After a Cancel, Wait returns an error that matches
+// errors.Is(err, ErrCancelled), so callers can distinguish a requested stop
+// from an encode failure.
+func (r *FfmpegRun) Cancel() {
+	r.mu.Lock()
+	r.cancelled = true
+	r.mu.Unlock()
+	r.cancel()
+}
+
 // Wait blocks until the ffmpeg process has finished and all events have been
-// dispatched, then returns nil if it exited successfully, or an error
-// (including a tail of stderr) on failure.
+// dispatched, then returns nil if it exited successfully, or an error on
+// failure — matched by ErrCancelled if the run was stopped via Cancel, and by
+// ErrRunFailed if it failed on its own (carrying a tail of stderr).
 func (r *FfmpegRun) Wait() error {
 	<-r.runDone
 	return r.finalErr
@@ -189,6 +217,10 @@ func (r *FfmpegRun) dispatch() {
 // each sample, then reaps the process and emits a terminal state event.
 func (r *FfmpegRun) readProgress(stdout io.Reader) {
 	defer close(r.events)
+	// Release the process context once the run is reaped, so the context and
+	// its watcher goroutine do not outlive the run. Idempotent if Cancel was
+	// the thing that ended it.
+	defer r.cancel()
 
 	scanner := bufio.NewScanner(stdout)
 	scanner.Buffer(make([]byte, 0, 4096), 1024*1024)
@@ -234,8 +266,10 @@ func (r *FfmpegRun) readProgress(stdout io.Reader) {
 		}
 		sample[key] = val
 	}
-
-	// Process has reached EOF; reap it.
+	// Process has reached EOF; reap it. The exit status is authoritative for
+	// success; a scanner read error (e.g. a progress line too long to buffer)
+	// is deliberately non-fatal, since it cannot change whether the encode
+	// succeeded and progress parsing is best-effort.
 	werr := r.cmd.Wait()
 	succ := werr == nil
 
@@ -246,12 +280,27 @@ func (r *FfmpegRun) readProgress(stdout io.Reader) {
 		MaxFps:         maxFps,
 		LastFrame:      lastFrame,
 	}
+	var runErr error
 	if werr != nil {
+		stderr := ""
+		if r.stderr != nil {
+			stderr = r.stderr.String()
+		}
+		r.mu.RLock()
+		wasCancelled := r.cancelled
+		r.mu.RUnlock()
+		if wasCancelled {
+			// The process was stopped by Cancel(): classify it distinctly from a
+			// self-inflicted failure so callers can tell the two apart.
+			runErr = cancelError("ffmpeg", r.c.ffmpegPath, werr, stderr)
+		} else {
+			runErr = exitError("ffmpeg", r.c.ffmpegPath, werr, stderr)
+		}
 		if ee, ok := werr.(*exec.ExitError); ok {
 			result.ExitCode = int32(ee.ExitCode()) //nolint:gosec // G115: process exit codes fit in int32
 		}
 		if r.stderr != nil {
-			result.Error = tail(r.stderr.String(), 4096)
+			result.Error = tail(stderr, 4096)
 		}
 	}
 
@@ -264,8 +313,8 @@ func (r *FfmpegRun) readProgress(stdout io.Reader) {
 		Result: result,
 	})
 
-	if !succ {
-		r.finalErr = fmt.Errorf("ffmpeg exited with error: %w", werr)
+	if runErr != nil {
+		r.finalErr = runErr
 	}
 }
 

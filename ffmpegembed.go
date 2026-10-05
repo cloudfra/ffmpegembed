@@ -46,6 +46,7 @@ package ffmpegembed
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -147,18 +148,35 @@ func New(args *Args) (*Ffexec, error) {
 			return "", fmt.Errorf("unknown binary %q", name)
 		}
 		if len(b) == 0 {
-			return "", fmt.Errorf("no %s available for %s/%s: set UseExternalIfAvailable, supply %s bytes inline, or build with an embedded binary",
-				name, runtime.GOOS, runtime.GOARCH, name)
+			return "", fmt.Errorf("%s: %w for %s/%s (set UseExternalIfAvailable, supply %s bytes inline, or build with an embedded binary)",
+				name, ErrNoBinary, runtime.GOOS, runtime.GOARCH, name)
 		}
 		return writeToDir(name, b)
 	}
 
+	// removeIfCreated removes the auto-created temp directory if resolution is
+	// about to fail, so it is not left behind (Close() would normally remove it,
+	// but no *Ffexec is returned on an error path). It returns the removal error
+	// so the caller can surface it alongside the resolution failure.
+	removeIfCreated := func() error {
+		if createdDir {
+			return os.RemoveAll(dir)
+		}
+		return nil
+	}
+
 	ffmpeg, err := resolve("ffmpeg", args.GetFfmpegBinary())
 	if err != nil {
+		if rerr := removeIfCreated(); rerr != nil {
+			err = errors.Join(err, rerr)
+		}
 		return nil, err
 	}
 	ffprobe, err := resolve("ffprobe", args.GetFfprobeBinary())
 	if err != nil {
+		if rerr := removeIfCreated(); rerr != nil {
+			err = errors.Join(err, rerr)
+		}
 		return nil, err
 	}
 
@@ -182,7 +200,7 @@ func (f *Ffexec) FfprobePath() string { return f.ffprobePath }
 func (f *Ffexec) FfmpegVersion() (string, error) {
 	out, err := exec.CommandContext(context.Background(), f.ffmpegPath, "-version").Output() //nolint:gosec // G204: fixed, trusted binary with a constant -version argument
 	if err != nil {
-		return "", fmt.Errorf("ffmpeg -version: %w", err)
+		return "", runError("ffmpeg", f.ffmpegPath, err, "")
 	}
 	return firstLine(string(out)), nil
 }
@@ -191,7 +209,7 @@ func (f *Ffexec) FfmpegVersion() (string, error) {
 func (f *Ffexec) FfprobeVersion() (string, error) {
 	out, err := exec.CommandContext(context.Background(), f.ffprobePath, "-version").Output() //nolint:gosec // G204: fixed, trusted binary with a constant -version argument
 	if err != nil {
-		return "", fmt.Errorf("ffprobe -version: %w", err)
+		return "", runError("ffprobe", f.ffprobePath, err, "")
 	}
 	return firstLine(string(out)), nil
 }

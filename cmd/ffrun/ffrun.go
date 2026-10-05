@@ -29,6 +29,7 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -221,31 +222,49 @@ func cmdRun(ffexec *ffmpegembed.Ffexec, args []string) error {
 	}
 
 	var lastResult *ffmpegembed.FfmpegResult
+	// Register the callback before any event can be dispatched: Ffmpeg returns
+	// after starting the process, so a nil onUpdate would silently drop early
+	// progress/result events if the callback were set inside the goroutine below.
+	run.OnUpdate(func(ev *ffmpegembed.Event) {
+		switch {
+		case ev.GetProgress() != nil:
+			p := ev.GetProgress()
+			fmt.Fprintf(os.Stderr, "\rffmpeg  frame=%d  fps=%.2f  speed=%.4gx  time=%ss", p.GetFrame(), p.GetFps(), p.GetSpeed(), duration(p.GetTime()))
+		case ev.GetResult() != nil:
+			lastResult = ev.GetResult()
+		}
+	})
+	var lastErr error
 	done := make(chan struct{})
 	go func() {
-		run.OnUpdate(func(ev *ffmpegembed.Event) {
-			switch {
-			case ev.GetProgress() != nil:
-				p := ev.GetProgress()
-				fmt.Fprintf(os.Stderr, "\rffmpeg  frame=%d  fps=%.2f  speed=%.4gx  time=%ss", p.GetFrame(), p.GetFps(), p.GetSpeed(), duration(p.GetTime()))
-			case ev.GetResult() != nil:
-				lastResult = ev.GetResult()
-			}
-		})
+		defer close(done)
 		if err := run.Wait(); err != nil {
-			fmt.Fprintln(os.Stderr)
-			fmt.Fprintln(os.Stderr, "run failed:", err)
+			// Wait() returns only after the terminal event has been dispatched,
+			// so lastResult is already set; the failure is surfaced and the
+			// structured result (with success=false) still carries the details.
+			lastErr = err
 		}
-		close(done)
 	}()
 	<-done
 	fmt.Fprintln(os.Stderr) // newline after progress line
+	if lastErr != nil {
+		if errors.Is(lastErr, ffmpegembed.ErrCancelled) {
+			fmt.Fprintln(os.Stderr, "run cancelled:", lastErr)
+		} else {
+			fmt.Fprintln(os.Stderr, "run failed:", lastErr)
+		}
+	}
 
 	result := lastResult
 	if result == nil {
 		result = &ffmpegembed.FfmpegResult{Output: fa.Output}
 	}
-	return emitJSON(result)
+	if err := emitJSON(result); err != nil {
+		return err
+	}
+	// Exit non-zero when the encode did not succeed, even though the structured
+	// result (with success=false) has already been emitted.
+	return lastErr
 }
 
 // cmdVersion prints the version of the ffmpeg (and ffprobe) the resolved

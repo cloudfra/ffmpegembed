@@ -18,6 +18,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -229,7 +230,15 @@ func TestNewEmbeddedResolutionAndClose(t *testing.T) {
 		if err != nil {
 			t.Fatalf("extracted binary missing: %v", err)
 		}
-		if info.Mode().Perm()&0o100 == 0 {
+		// Executability is the Unix mode's execute bit on POSIX, but on
+		// Windows it comes from the file extension / ACL, so the 0o100 bit is
+		// absent by design. Assert the .exe suffix there instead of the
+		// (meaningless-on-Windows) exec bit.
+		if runtime.GOOS == "windows" {
+			if !strings.HasSuffix(p, ".exe") {
+				t.Errorf("extracted binary should be a .exe on Windows: %s", p)
+			}
+		} else if info.Mode().Perm()&0o100 == 0 {
 			t.Errorf("extracted binary not executable: %s", p)
 		}
 	}
