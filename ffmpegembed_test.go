@@ -19,6 +19,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -277,4 +278,188 @@ func TestFfexecVersion(t *testing.T) {
 
 	t.Logf("ffmpeg:  %s", ver)
 	t.Logf("ffprobe: %s", pver)
+}
+
+// TestClampFraction covers the pure completion-fraction helper that turns raw
+// out_time_us / total_duration_us into the Progress.Percent value (a 0.0-1.0
+// fraction).
+func TestClampFraction(t *testing.T) {
+	cases := []struct {
+		name         string
+		nowUs, total int64
+		want         float64
+	}{
+		{"zero now", 0, 1_000_000, 0.0},
+		{"negative now", -100, 1_000_000, 0.0},
+		{"unknown total", 1_000_000, 0, 0.0},
+		{"negative total", 1_000_000, -1, 0.0},
+		{"one tenth", 100_000, 1_000_000, 0.1},
+		{"halfway", 500_000, 1_000_000, 0.5},
+		{"exactly done", 1_000_000, 1_000_000, 1.0},
+		{"overrun clamps to one", 1_500_000, 1_000_000, 1.0},
+		{"both zero", 0, 0, 0.0},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := clampFraction(c.nowUs, c.total); got != c.want {
+				t.Errorf("clampFraction(now=%d, total=%d) = %v, want %v",
+					c.nowUs, c.total, got, c.want)
+			}
+		})
+	}
+}
+
+// newAndSkip returns a fresh *Ffexec, or calls t.Skipf if no
+// ffmpeg/ffprobe binary can be resolved (embedded or system).
+func newAndSkip(t *testing.T) *Ffexec {
+	t.Helper()
+	f, err := New(&Args{})
+	if err != nil {
+		t.Skipf("no ffmpeg/ffprobe resolvable on host; skip: %v", err)
+	}
+	t.Cleanup(func() {
+		if cerr := f.Close(); cerr != nil {
+			t.Errorf("Cleanup Close: %v", cerr)
+		}
+	})
+	return f
+}
+
+// TestExampleFfprobe is an end-to-end example: generate one second of lavfi
+// test video on disk via Ffmpeg, then probe it and assert the structured
+// Format/Streams fields land as expected. This doubles as an example of how
+// to use New + Ffprobe + Close in a single test.
+func TestExampleFfprobe(t *testing.T) {
+	f := newAndSkip(t)
+	tmp := t.TempDir()
+	inPath := filepath.Join(tmp, "in.mov")
+
+	gen, err := f.Ffmpeg(&FfmpegArgs{RawArgs: []string{
+		"-y",
+		"-f", "lavfi", "-i", "testsrc=duration=1:size=160x120:rate=10",
+		"-an", "-c:v", "libx264", "-preset", "veryfast",
+		"-f", "mov", inPath,
+	}})
+	if err != nil {
+		t.Fatalf("Ffmpeg(generate): %v", err)
+	}
+	if err := gen.Wait(); err != nil {
+		t.Fatalf("Ffmpeg(generate).Wait: %v", err)
+	}
+
+	res, err := f.Ffprobe(&FfProbeArgs{Input: inPath})
+	if err != nil {
+		t.Fatalf("Ffprobe: %v", err)
+	}
+	if got := res.GetFormat().GetDuration(); got <= 0 || got > 5 {
+		t.Errorf("Format.Duration = %v; want (0, 5]", got)
+	}
+	if len(res.GetStreams()) < 1 {
+		t.Errorf("len(Format.Streams) = %d; want >= 1", len(res.GetStreams()))
+	}
+	name := res.GetFormat().GetFormatName()
+	if !strings.Contains(name, "mov") && !strings.Contains(name, "mp4") && !strings.Contains(name, "qt") {
+		t.Errorf("Format.FormatName = %q; expected mov/mp4/qt family", name)
+	}
+	t.Logf("input=%s duration=%.3fs streams=%d fmt=%q",
+		inPath, res.GetFormat().GetDuration(), len(res.GetStreams()), name)
+}
+
+// TestExampleFfmpegEncodeProgress is an end-to-end example that exercises the
+// new Progress.Percent field: it generates a short test video, re-encodes it
+// while collecting progress via OnUpdate, and asserts that:
+//
+//   - at least one Progress event is delivered
+//   - every Percent lies in [0.0, 1.0]
+//   - at least one Percent is strictly > 0 (the generated input has a known
+//     duration, so Percent must be computable)
+//   - the final Percent is the maximum observed (non-decreasing)
+func TestExampleFfmpegEncodeProgress(t *testing.T) {
+	f := newAndSkip(t)
+	tmp := t.TempDir()
+	inPath := filepath.Join(tmp, "in.mov")
+	outPath := filepath.Join(tmp, "out.mp4")
+
+	gen, err := f.Ffmpeg(&FfmpegArgs{RawArgs: []string{
+		"-y",
+		"-f", "lavfi", "-i", "testsrc=duration=2:size=160x120:rate=10",
+		"-an", "-c:v", "libx264", "-preset", "veryfast",
+		"-f", "mov", inPath,
+	}})
+	if err != nil {
+		t.Fatalf("Ffmpeg(generate): %v", err)
+	}
+	if err := gen.Wait(); err != nil {
+		t.Fatalf("Ffmpeg(generate).Wait: %v", err)
+	}
+
+	var (
+		mu        sync.Mutex
+		percents  []float64
+		lastFrame int64
+		succeeded bool
+	)
+	run, err := f.Ffmpeg(&FfmpegArgs{
+		Inputs:     []string{inPath},
+		Output:     outPath,
+		VideoCodec: "libx264",
+		Overwrite:  true,
+	})
+	if err != nil {
+		t.Fatalf("Ffmpeg(encode): %v", err)
+	}
+	run.OnUpdate(func(ev *Event) {
+		if p := ev.GetProgress(); p != nil {
+			mu.Lock()
+			percents = append(percents, p.Percent)
+			lastFrame = p.Frame
+			mu.Unlock()
+		}
+		if r := ev.GetResult(); r != nil && r.GetSuccess() {
+			mu.Lock()
+			succeeded = true
+			mu.Unlock()
+		}
+	})
+	if err := run.Wait(); err != nil {
+		t.Fatalf("Ffmpeg(encode).Wait: %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	if !succeeded {
+		t.Fatalf("encode did not report success; cannot assert on progress")
+	}
+	if len(percents) == 0 {
+		t.Fatalf("no Progress events delivered; expected >= 1")
+	}
+	for i, p := range percents {
+		if p < 0.0 || p > 1.0 {
+			t.Errorf("percents[%d] = %v — out of [0.0, 1.0]", i, p)
+		}
+	}
+	posCount := 0
+	for _, p := range percents {
+		if p > 0.0 {
+			posCount++
+		}
+	}
+	if posCount == 0 {
+		t.Errorf("all percents are 0.0; expected > 0 for an input with a known duration")
+	}
+	for i := 1; i < len(percents); i++ {
+		if percents[i] < percents[i-1] {
+			t.Fatalf("percents not non-decreasing at i=%d: %v < %v (sample=%v)",
+				i, percents[i], percents[i-1], percents)
+		}
+	}
+	if percents[len(percents)-1] <= 0.0 {
+		t.Errorf("last percent = %v; want > 0", percents[len(percents)-1])
+	}
+	if lastFrame <= 0 {
+		t.Errorf("last frame = %d; want > 0", lastFrame)
+	}
+	t.Logf("progress: %d events, final percent=%.3f, final frame=%d",
+		len(percents), percents[len(percents)-1], lastFrame)
 }

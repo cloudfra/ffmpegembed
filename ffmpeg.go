@@ -20,10 +20,12 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"math"
 	"os/exec"
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/cloudfra/ffmpegembed/proto"
 )
@@ -83,6 +85,8 @@ func buildFfmpegArgs(a *FfmpegArgs) []string {
 }
 
 // FfmpegRun is a handle to a running ffmpeg process, returned by Ffexec.Ffmpeg.
+//
+// The zero value is not valid; use Ffexec.Ffmpeg to obtain one.
 type FfmpegRun struct {
 	c *Ffexec
 	// The resolved ffmpeg path used to execute.
@@ -95,6 +99,11 @@ type FfmpegRun struct {
 	finalErr error
 	outFile  string
 	mu       sync.RWMutex
+
+	// Total input duration in microseconds, as pre-probed by Ffmpeg. Zero when
+	// the input has no known duration (e.g. live / RTP) or when the probe
+	// failed — in either case Progress.Percent is reported as 0.0.
+	totalDurationUs int64
 }
 
 // Ffmpeg starts an ffmpeg run described by a and returns a handle. The
@@ -120,6 +129,11 @@ func (f *Ffexec) Ffmpeg(args *FfmpegArgs) (*FfmpegRun, error) {
 	stderr := &bytes.Buffer{}
 	cmd.Stderr = stderr
 
+	// Best-effort probe of the first input's total duration. On failure (e.g.
+	// a live/RTP source, a URL that cannot be probed, or a probe timeout) the
+	// probe returns 0 and Percent will be reported as 0.0 for every sample.
+	durationUs := probeInputDurationUs(f, args.GetInputs())
+
 	if err := cmd.Start(); err != nil {
 		return nil, fmt.Errorf("ffmpeg: start: %w", err)
 	}
@@ -131,6 +145,8 @@ func (f *Ffexec) Ffmpeg(args *FfmpegArgs) (*FfmpegRun, error) {
 		events:  make(chan *Event, 256),
 		runDone: make(chan struct{}),
 		outFile: args.GetOutput(),
+
+		totalDurationUs: durationUs,
 	}
 
 	go run.readProgress(stdout)
@@ -186,6 +202,7 @@ func (r *FfmpegRun) readProgress(stdout io.Reader) {
 			return
 		}
 		p := parseProgress(sample)
+		p.Percent = clampFraction(p.OutTimeUs, r.totalDurationUs)
 		progressCount++
 		if p.Fps > maxFps {
 			maxFps = p.Fps
@@ -260,6 +277,77 @@ func (r *FfmpegRun) send(ev *Event) {
 	}
 }
 
+// clampFraction maps an observed output time to a 0.0..1.0 completion
+// fraction. Returns 0.0 when the total is unknown (0 or negative) or when the
+// observed time is 0 or negative — the caller can treat 0.0 as "undetermined".
+// Values beyond 1.0 are clamped (happens when out_time exceeds duration due to
+// container quirks).
+func clampFraction(nowUs, totalUs int64) float64 {
+	if nowUs <= 0 || totalUs <= 0 {
+		return 0.0
+	}
+	pct := float64(nowUs) / float64(totalUs)
+	if pct <= 0.0 {
+		return 0.0
+	}
+	if pct >= 1.0 {
+		return 1.0
+	}
+	return pct
+}
+
+// probeInputTimeout bounds the pre-launch probe so a slow or unresponsive
+// input cannot stall Ffmpeg indefinitely.
+const probeInputTimeout = 2 * time.Second
+
+// probeInputDurationUs pre-probes the first input's total duration (in
+// microseconds) so that FfmpegRun.readProgress can compute the Progress
+// Percent field. Any failure — no inputs, unparseable probe, non-finite
+// duration, probe timeout — yields 0, which is reported to users as an
+// "undetermined" percent (0.0).
+func probeInputDurationUs(f *Ffexec, inputs []string) int64 {
+	if len(inputs) == 0 {
+		return 0
+	}
+	in := inputs[0]
+	if in == "" {
+		return 0
+	}
+	if f == nil || f.ffprobePath == "" {
+		return 0
+	}
+
+	type res struct {
+		sec float64
+	}
+	out := make(chan res, 1)
+	go func() {
+		// Ffprobe does not take a context; we race against a timeout below
+		// so a slow or hung probe cannot block Ffmpeg. The orphaned
+		// ffprobe (if any) will terminate on its own and produce no harm.
+		pr, err := f.Ffprobe(&FfProbeArgs{Input: in, ShowFormat: true, ShowStreams: false})
+		if err != nil || pr == nil || pr.GetFormat() == nil {
+			out <- res{}
+			return
+		}
+		out <- res{sec: pr.GetFormat().GetDuration()}
+	}()
+
+	var sec float64
+	select {
+	case v := <-out:
+		sec = v.sec
+	case <-time.After(probeInputTimeout):
+		return 0
+	}
+
+	if sec <= 0 || math.IsInf(sec, 0) || math.IsNaN(sec) {
+		return 0
+	}
+	return int64(sec * 1e6)
+}
+
+// tail keeps the last n bytes of s, prefixing truncated output with an ellipsis.
 func tail(s string, n int) string {
 	if len(s) <= n {
 		return s

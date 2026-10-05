@@ -841,7 +841,13 @@ type Progress struct {
 	// Parsed "out_time" string as seconds (e.g. "00:00:24.47" -> 24.47).
 	OutputTime float64 `protobuf:"fixed64,10,opt,name=output_time,json=outputTime,proto3" json:"output_time,omitempty"`
 	// Every raw key/value pair from the ffmpeg sample, verbatim.
-	Fields        map[string]string `protobuf:"bytes,11,rep,name=fields,proto3" json:"fields,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	Fields map[string]string `protobuf:"bytes,11,rep,name=fields,proto3" json:"fields,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	// Completion fraction in [0.0, 1.0] (capped at 1.0): the input's out_time
+	// divided by its total duration (as probed at start). Zero when the input
+	// has no known duration (e.g. live/RTP streams) — in which case consumers
+	// should treat the value as "undetermined" and rely on the raw fields
+	// (out_time_us / out_time) instead.
+	Percent       float64 `protobuf:"fixed64,12,opt,name=percent,proto3" json:"percent,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -951,6 +957,13 @@ func (x *Progress) GetFields() map[string]string {
 		return x.Fields
 	}
 	return nil
+}
+
+func (x *Progress) GetPercent() float64 {
+	if x != nil {
+		return x.Percent
+	}
+	return 0
 }
 
 // A terminal report of the run, set on the last event.
@@ -1231,7 +1244,7 @@ const file_proto_ffrun_proto_rawDesc = "" +
 	"\tfaststart\x18\b \x01(\bR\tfaststart\x12\x1c\n" +
 	"\toverwrite\x18\t \x01(\bR\toverwrite\x12\x19\n" +
 	"\braw_args\x18\n" +
-	" \x03(\tR\arawArgs\"\x8f\x03\n" +
+	" \x03(\tR\arawArgs\"\xa9\x03\n" +
 	"\bProgress\x12\x12\n" +
 	"\x04time\x18\x01 \x01(\x01R\x04time\x12\x14\n" +
 	"\x05frame\x18\x02 \x01(\x03R\x05frame\x12\x10\n" +
@@ -1248,7 +1261,8 @@ const file_proto_ffrun_proto_rawDesc = "" +
 	"\voutput_time\x18\n" +
 	" \x01(\x01R\n" +
 	"outputTime\x12<\n" +
-	"\x06fields\x18\v \x03(\v2$.cloudfra.ffrun.Progress.FieldsEntryR\x06fields\x1a9\n" +
+	"\x06fields\x18\v \x03(\v2$.cloudfra.ffrun.Progress.FieldsEntryR\x06fields\x12\x18\n" +
+	"\apercent\x18\f \x01(\x01R\apercent\x1a9\n" +
 	"\vFieldsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xd4\x01\n" +

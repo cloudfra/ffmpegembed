@@ -193,6 +193,12 @@ message Progress {
   double output_time = 10;
   // Every raw key/value pair from the ffmpeg sample, verbatim.
   map<string, string> fields = 11;
+  // Completion fraction in [0.0, 1.0] (capped at 1.0): the input's out_time
+  // divided by its total duration (as probed at start). Zero when the input
+  // has no known duration (e.g. live/RTP streams) — in which case consumers
+  // should treat the value as "undetermined" and rely on the raw fields
+  // (out_time_us / out_time) instead.
+  double percent = 12;
 }
 
 // A terminal report of the run, set on the last event.
