@@ -104,6 +104,17 @@ ffembed-clean:
 # One pattern rule handles every platform. $* is the <goos>_<goarch> stem and
 # the FF_{KIND,FFURL,FPURL,EXE}_$(stem) variables select the source + kind.
 # A `.done` stamp is produced per platform so the recipe runs once each.
+#
+# CAUTION: the recipe below is ONE backslash-continued shell line, so do NOT
+# put a comment line inside it — a comment line without a trailing `\` splits
+# the compound if/else/case and the shell sees a dangling `if` ("unexpected
+# end of file from `if'"). Keep commentary here, above the rule.
+#
+# The btbin branch locates the extracted bin/ with a shell glob, not `find`:
+# on the Windows self-hosted runner (Git Bash) a bare `find` resolves to
+# C:\Windows\System32\find.exe (Windows FIND) and errors on -type/-name/-print.
+# Both BtbN archives extract to <top>/bin, so "$work"/*/bin finds it with no
+# external command.
 # ---------------------------------------------------------------------------
 $(FF_EMBED)/%/.done:
 	set -eu; \
@@ -128,11 +139,6 @@ $(FF_EMBED)/%/.done:
 			*.tar.xz) $(FF_DL) -o "$$work/a.txz"  "$$ffurl" && ( cd "$$work" && tar xJf a.txz ) ;; \
 			*) echo "  [ffmpeg] unsupported archive type for $*: $$ffurl" >&2; exit 1 ;; \
 		esac; \
-		# Locate the extracted bin/ with a glob, not `find`: on the Windows
-		# self-hosted runner (Git Bash) there is no GNU find, so a bare `find`
-		# resolves to C:\Windows\System32\find.exe (Windows FIND) and errors on
-		# -type/-name/-print. Both BtbN archives extract to <top>/bin, so a
-		# single-level glob over the work dir finds it without any external cmd.
 		bindir=""; \
 		for d in "$$work"/*/bin "$$work"/bin; do \
 			if [ -f "$$d/ffmpeg$$exe" ]; then bindir="$$d"; break; fi; \
