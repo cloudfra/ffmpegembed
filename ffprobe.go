@@ -81,7 +81,7 @@ func (f *Ffexec) Ffprobe(args *FfProbeArgs) (*FfProbeResult, error) {
 		args = &FfProbeArgs{}
 	}
 	if args.GetInput() == "" && len(args.GetRawArgs()) == 0 {
-		return nil, fmt.Errorf("ffprobe: no input provided")
+		return nil, fmt.Errorf("ffprobe: %w (no input provided)", ErrInvalidArgs)
 	}
 
 	cmd := exec.CommandContext(context.Background(), f.ffprobePath, buildFfProbeArgs(args)...) //nolint:gosec // G204: ffprobe is a fixed, trusted binary; all args come from the library's own API
@@ -90,7 +90,7 @@ func (f *Ffexec) Ffprobe(args *FfProbeArgs) (*FfProbeResult, error) {
 	cmd.Stderr = &stderr
 
 	if err := cmd.Run(); err != nil {
-		return nil, fmt.Errorf("ffprobe: %w: %s", err, strings.TrimSpace(stderr.String()))
+		return nil, runError("ffprobe", f.ffprobePath, err, strings.TrimSpace(stderr.String()))
 	}
 
 	result, err := parseFfprobe(stdout.String())

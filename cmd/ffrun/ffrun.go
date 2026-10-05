@@ -29,6 +29,7 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -220,32 +221,42 @@ func cmdRun(ffexec *ffmpegembed.Ffexec, args []string) error {
 		return err
 	}
 
-	var lastResult *ffmpegembed.FfmpegResult
+	// Register the callback before any event can be dispatched: Ffmpeg returns
+	// after starting the process, so a nil onUpdate would silently drop early
+	// progress events if the callback were set inside the goroutine below. The
+	// terminal result no longer needs to be captured here — it is stored on the
+	// run and read back via run.Result() after Wait.
+	run.OnUpdate(func(ev *ffmpegembed.Event) {
+		if p := ev.GetProgress(); p != nil {
+			fmt.Fprintf(os.Stderr, "\rffmpeg  frame=%d  fps=%.2f  speed=%.4gx  time=%ss", p.GetFrame(), p.GetFps(), p.GetSpeed(), duration(p.GetTime()))
+		}
+	})
+	var lastErr error
 	done := make(chan struct{})
 	go func() {
-		run.OnUpdate(func(ev *ffmpegembed.Event) {
-			switch {
-			case ev.GetProgress() != nil:
-				p := ev.GetProgress()
-				fmt.Fprintf(os.Stderr, "\rffmpeg  frame=%d  fps=%.2f  speed=%.4gx  time=%ss", p.GetFrame(), p.GetFps(), p.GetSpeed(), duration(p.GetTime()))
-			case ev.GetResult() != nil:
-				lastResult = ev.GetResult()
-			}
-		})
-		if err := run.Wait(); err != nil {
-			fmt.Fprintln(os.Stderr)
-			fmt.Fprintln(os.Stderr, "run failed:", err)
-		}
-		close(done)
+		defer close(done)
+		lastErr = run.Wait()
 	}()
 	<-done
 	fmt.Fprintln(os.Stderr) // newline after progress line
+	if lastErr != nil {
+		if errors.Is(lastErr, ffmpegembed.ErrCancelled) {
+			fmt.Fprintln(os.Stderr, "run cancelled:", lastErr)
+		} else {
+			fmt.Fprintln(os.Stderr, "run failed:", lastErr)
+		}
+	}
 
-	result := lastResult
+	result := run.Result()
 	if result == nil {
 		result = &ffmpegembed.FfmpegResult{Output: fa.Output}
 	}
-	return emitJSON(result)
+	if err := emitJSON(result); err != nil {
+		return err
+	}
+	// Exit non-zero when the encode did not succeed, even though the structured
+	// result (with success=false) has already been emitted.
+	return lastErr
 }
 
 // cmdVersion prints the version of the ffmpeg (and ffprobe) the resolved
