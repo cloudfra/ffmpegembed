@@ -104,6 +104,7 @@ type FfmpegRun struct {
 	runDone  chan struct{}
 	onUpdate func(*Event)
 	finalErr error
+	result   *FfmpegResult // terminal result; valid once Wait has returned
 	outFile  string
 	mu       sync.RWMutex
 
@@ -196,7 +197,22 @@ func (r *FfmpegRun) Cancel() {
 // ErrRunFailed if it failed on its own (carrying a tail of stderr).
 func (r *FfmpegRun) Wait() error {
 	<-r.runDone
-	return r.finalErr
+	r.mu.RLock()
+	finalErr := r.finalErr
+	r.mu.RUnlock()
+	return finalErr
+}
+
+// Result returns the run's terminal result — success flag, output, progress
+// stats, and (on failure) the exit code and a stderr tail. It is valid once
+// Wait has returned; before that it is nil. Prefer this over capturing the
+// result from the OnUpdate event stream, which is best-effort and can drop
+// the terminal event if the event buffer is full.
+func (r *FfmpegRun) Result() *FfmpegResult {
+	r.mu.RLock()
+	res := r.result
+	r.mu.RUnlock()
+	return res
 }
 
 // dispatch drains the event channel and forwards each event to the registered
@@ -313,9 +329,13 @@ func (r *FfmpegRun) readProgress(stdout io.Reader) {
 		Result: result,
 	})
 
-	if runErr != nil {
-		r.finalErr = runErr
-	}
+	// Retain the terminal result and the failure (if any) on the run so a
+	// caller can fetch them via Result() / Wait after the run is finished,
+	// without relying on the best-effort event stream.
+	r.mu.Lock()
+	r.result = result
+	r.finalErr = runErr
+	r.mu.Unlock()
 }
 
 func (r *FfmpegRun) send(ev *Event) {

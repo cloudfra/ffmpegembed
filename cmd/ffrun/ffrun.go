@@ -221,29 +221,21 @@ func cmdRun(ffexec *ffmpegembed.Ffexec, args []string) error {
 		return err
 	}
 
-	var lastResult *ffmpegembed.FfmpegResult
 	// Register the callback before any event can be dispatched: Ffmpeg returns
 	// after starting the process, so a nil onUpdate would silently drop early
-	// progress/result events if the callback were set inside the goroutine below.
+	// progress events if the callback were set inside the goroutine below. The
+	// terminal result no longer needs to be captured here — it is stored on the
+	// run and read back via run.Result() after Wait.
 	run.OnUpdate(func(ev *ffmpegembed.Event) {
-		switch {
-		case ev.GetProgress() != nil:
-			p := ev.GetProgress()
+		if p := ev.GetProgress(); p != nil {
 			fmt.Fprintf(os.Stderr, "\rffmpeg  frame=%d  fps=%.2f  speed=%.4gx  time=%ss", p.GetFrame(), p.GetFps(), p.GetSpeed(), duration(p.GetTime()))
-		case ev.GetResult() != nil:
-			lastResult = ev.GetResult()
 		}
 	})
 	var lastErr error
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		if err := run.Wait(); err != nil {
-			// Wait() returns only after the terminal event has been dispatched,
-			// so lastResult is already set; the failure is surfaced and the
-			// structured result (with success=false) still carries the details.
-			lastErr = err
-		}
+		lastErr = run.Wait()
 	}()
 	<-done
 	fmt.Fprintln(os.Stderr) // newline after progress line
@@ -255,7 +247,7 @@ func cmdRun(ffexec *ffmpegembed.Ffexec, args []string) error {
 		}
 	}
 
-	result := lastResult
+	result := run.Result()
 	if result == nil {
 		result = &ffmpegembed.FfmpegResult{Output: fa.Output}
 	}

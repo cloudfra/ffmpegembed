@@ -292,3 +292,48 @@ func TestCancelAfterComplete(t *testing.T) {
 		t.Errorf("second Wait() after Cancel of a completed run: %v", err)
 	}
 }
+
+// TestRunResultGetter verifies the terminal result is stored on the run and
+// gettable via Result() once Wait has returned, without needing to capture it
+// from the OnUpdate event stream.
+func TestRunResultGetter(t *testing.T) {
+	f := newAndSkip(t)
+	tmp := t.TempDir()
+	inPath := filepath.Join(tmp, "in.mov")
+	outPath := filepath.Join(tmp, "out.mp4")
+
+	gen, err := f.Ffmpeg(&FfmpegArgs{RawArgs: []string{
+		"-y", "-f", "lavfi", "-i", "testsrc=duration=1:size=160x120:rate=10",
+		"-an", "-c:v", "libx264", "-preset", "veryfast", "-f", "mov", inPath,
+	}})
+	if err != nil {
+		t.Fatalf("Ffmpeg(generate): %v", err)
+	}
+	if err := gen.Wait(); err != nil {
+		t.Fatalf("Ffmpeg(generate).Wait: %v", err)
+	}
+
+	run, err := f.Ffmpeg(&FfmpegArgs{
+		Inputs:     []string{inPath},
+		Output:     outPath,
+		VideoCodec: "libx264",
+		Overwrite:  true,
+	})
+	if err != nil {
+		t.Fatalf("Ffmpeg(encode): %v", err)
+	}
+	if err := run.Wait(); err != nil {
+		t.Fatalf("Ffmpeg(encode).Wait: %v", err)
+	}
+
+	res := run.Result()
+	if res == nil {
+		t.Fatal("Result() after Wait should be non-nil")
+	}
+	if !res.GetSuccess() {
+		t.Error("Result().Success should be true for a successful encode")
+	}
+	if res.GetOutput() != outPath {
+		t.Errorf("Result().Output = %q, want %q", res.GetOutput(), outPath)
+	}
+}
