@@ -17,7 +17,10 @@ package ffmpegembed
 import (
 	"errors"
 	"fmt"
+	"io/fs"
+	"os"
 	"os/exec"
+	"runtime"
 )
 
 // Predefined sentinel errors let callers detect common failure modes with
@@ -50,7 +53,8 @@ var (
 	// ErrRunFailed instead. A common cause is a missing dynamic-link
 	// dependency at startup (on Windows the loader aborts before the process
 	// begins, reported as exit status 0xC0000135 / STATUS_DLL_NOT_FOUND, e.g.
-	// a missing VC++ runtime).
+	// avicap32.dll on Windows Server Core). RunError.Hint then carries the
+	// steps to fix it.
 	ErrFailedToStart = errors.New("ffmpegembed: failed to start binary")
 
 	// ErrRunFailed is returned (wrapped, as a *RunError) when an ffmpeg/ffprobe
@@ -90,6 +94,12 @@ type RunError struct {
 	// start.
 	Err error
 
+	// Hint describes how to fix the failure when its cause is recognized (for
+	// example which Windows package supplies a DLL the binary could not load).
+	// It is empty when the failure is not one this package knows how to
+	// resolve.
+	Hint string
+
 	// started is true when the process began and then failed (ErrRunFailed);
 	// false when it could not be started at all (ErrFailedToStart).
 	started bool
@@ -116,6 +126,9 @@ func (e *RunError) Error() string {
 	if e.StdErr != "" {
 		s += "; stderr: " + e.StdErr
 	}
+	if e.Hint != "" {
+		s += "; to fix: " + e.Hint
+	}
 	return s
 }
 
@@ -139,21 +152,75 @@ func (e *RunError) Is(target error) bool {
 	return target == ErrFailedToStart
 }
 
+// statusDLLNotFound is the Windows NTSTATUS STATUS_DLL_NOT_FOUND (0xC0000135)
+// as os/exec reports it in an exit code: the loader could not find a DLL the
+// executable imports, so the process ended before its entry point ran.
+const statusDLLNotFound = int32(-1073741515)
+
+// startupHint returns the steps to fix a process that exited with code on
+// goos before it could run, or "" when the exit code is not a recognized
+// startup failure.
+func startupHint(goos string, code int32) string {
+	if goos != "windows" || code != statusDLLNotFound {
+		return ""
+	}
+	return "Windows could not load a DLL the binary imports (STATUS_DLL_NOT_FOUND), so it never ran. " +
+		"The ffmpeg builds need avicap32.dll and msvfw32.dll (Video for Windows), which Windows Server Core " +
+		"and Server Core containers do not ship. Either (1) from an elevated PowerShell run " +
+		"`Add-WindowsCapability -Online -Name ServerCore.AppCompatibility~~~~0.0.1.0` and reboot, " +
+		"(2) copy avicap32.dll and msvfw32.dll from C:\\Windows\\System32 of a Desktop Experience install of the " +
+		"same Windows build, or (3) use an ffmpeg built without vfwcap via Args.FfmpegBinary/FfprobeBinary " +
+		"or Args.UseExternalIfAvailable."
+}
+
+// missingLoaderHint returns the steps to fix a start that failed with err on
+// goos because the binary's dynamic loader is absent, or "" when that is not
+// what happened. Linux reports this as "no such file or directory" for a file
+// that does exist: the kernel could not find the ELF interpreter the binary
+// names (for a glibc build, /lib64/ld-linux-x86-64.so.2).
+func missingLoaderHint(goos, path string, err error) string {
+	if goos != "linux" || !errors.Is(err, fs.ErrNotExist) {
+		return ""
+	}
+	if fi, serr := os.Stat(path); serr != nil || !fi.Mode().IsRegular() {
+		return ""
+	}
+	return "the binary exists but the system has no dynamic loader for it, so it never ran. " +
+		"It is dynamically linked against glibc, which musl-based and libc-free systems (Alpine, " +
+		"distroless/static, scratch images) do not provide. Either (1) run on a glibc-based system or " +
+		"image (e.g. debian, ubuntu, distroless/base), (2) use a fully static ffmpeg via " +
+		"Args.FfmpegBinary/FfprobeBinary, or (3) install ffmpeg with the system package manager " +
+		"(e.g. `apk add ffmpeg`) and set Args.UseExternalIfAvailable."
+}
+
+// classifyExit fills in the exit code of a process that os/exec reported as
+// having exited. An exit that is really a loader failure is reclassified as a
+// failed start (ErrFailedToStart) and given a Hint, since the binary never ran.
+func (e *RunError) classifyExit(err error) {
+	var ee *exec.ExitError
+	if !errors.As(err, &ee) {
+		return
+	}
+	e.ExitCode = int32(ee.ExitCode()) //nolint:gosec // G115: OS exit statuses fit in int32
+	if hint := startupHint(runtime.GOOS, e.ExitCode); hint != "" {
+		e.Hint = hint
+		e.started = false
+	}
+}
+
 // startError wraps an os/exec error from a failed start (cmd.Start, or a
 // run() in which the process never ran) as a *RunError matching ErrFailedToStart.
 func startError(name, path string, err error) error {
-	return &RunError{Name: name, Binary: path, ExitCode: -1, Err: err, started: false}
+	return &RunError{Name: name, Binary: path, ExitCode: -1, Err: err, Hint: missingLoaderHint(runtime.GOOS, path, err), started: false}
 }
 
 // exitError wraps an os/exec error from a process that did start but failed to
 // complete (cmd.Wait or cmd.Run), producing a *RunError matching ErrRunFailed
-// and carrying the exit code when one was reported.
+// and carrying the exit code when one was reported. An exit that is a
+// recognized loader failure matches ErrFailedToStart instead and has a Hint.
 func exitError(name, path string, err error, stderr string) error {
 	r := &RunError{Name: name, Binary: path, ExitCode: -1, StdErr: tail(stderr, 4096), Err: err, started: true}
-	var ee *exec.ExitError
-	if errors.As(err, &ee) {
-		r.ExitCode = int32(ee.ExitCode()) //nolint:gosec // G115: OS exit statuses fit in int32
-	}
+	r.classifyExit(err)
 	return r
 }
 
@@ -162,10 +229,7 @@ func exitError(name, path string, err error, stderr string) error {
 // reported. It mirrors exitError but flags the interruption as intentional.
 func cancelError(name, path string, err error, stderr string) error {
 	r := &RunError{Name: name, Binary: path, ExitCode: -1, StdErr: tail(stderr, 4096), Err: err, cancelled: true}
-	var ee *exec.ExitError
-	if errors.As(err, &ee) {
-		r.ExitCode = int32(ee.ExitCode()) //nolint:gosec // G115: OS exit statuses fit in int32
-	}
+	r.classifyExit(err)
 	return r
 }
 
@@ -177,5 +241,5 @@ func runError(name, path string, err error, stderr string) error {
 	if errors.As(err, &ee) {
 		return exitError(name, path, err, stderr)
 	}
-	return &RunError{Name: name, Binary: path, ExitCode: -1, StdErr: tail(stderr, 4096), Err: err, started: false}
+	return &RunError{Name: name, Binary: path, ExitCode: -1, StdErr: tail(stderr, 4096), Err: err, Hint: missingLoaderHint(runtime.GOOS, path, err), started: false}
 }
