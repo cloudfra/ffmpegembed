@@ -228,6 +228,11 @@ jobs:
           cache: false
       - name: System Information
         run: make system-info
+      - name: Install ffmpeg System Dependencies
+        # The runners are Windows Server Core, which lacks desktop/multimedia
+        # DLLs the embedded ffmpeg.exe imports (avicap32.dll, ...); without
+        # them every test that launches ffmpeg exits with 0xc0000135.
+        run: ./scripts/install-windows-deps.ps1
       - name: Clean
         run: make clean
       - name: Build Assets
