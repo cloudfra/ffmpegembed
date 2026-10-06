@@ -19,6 +19,7 @@ import (
 	"errors"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -335,5 +336,37 @@ func TestRunResultGetter(t *testing.T) {
 	}
 	if res.GetOutput() != outPath {
 		t.Errorf("Result().Output = %q, want %q", res.GetOutput(), outPath)
+	}
+}
+
+// TestStartupHint verifies that the Windows STATUS_DLL_NOT_FOUND exit status
+// (0xC0000135) is recognized as a loader failure with steps to fix it, and
+// that ordinary exit codes and other platforms get no hint.
+func TestStartupHint(t *testing.T) {
+	hint := startupHint("windows", statusDLLNotFound)
+	for _, want := range []string{"avicap32.dll", "msvfw32.dll", "ServerCore.AppCompatibility"} {
+		if !strings.Contains(hint, want) {
+			t.Errorf("startupHint(windows, 0xC0000135) = %q; want it to mention %q", hint, want)
+		}
+	}
+	if got := startupHint("windows", 1); got != "" {
+		t.Errorf("startupHint(windows, 1) = %q; want empty", got)
+	}
+	if got := startupHint("linux", statusDLLNotFound); got != "" {
+		t.Errorf("startupHint(linux, 0xC0000135) = %q; want empty", got)
+	}
+}
+
+// TestRunErrorHint verifies that a RunError's Hint is appended to its message
+// after the raw underlying error, so both are visible to the caller.
+func TestRunErrorHint(t *testing.T) {
+	raw := errors.New("exit status 0xc0000135")
+	err := &RunError{Name: "ffmpeg", ExitCode: statusDLLNotFound, Err: raw, Hint: "install the thing"}
+	msg := err.Error()
+	if !strings.Contains(msg, raw.Error()) || !strings.HasSuffix(msg, "; to fix: install the thing") {
+		t.Errorf("Error() = %q; want the raw error followed by the hint", msg)
+	}
+	if !errors.Is(err, ErrFailedToStart) || !errors.Is(err, raw) {
+		t.Errorf("hinted start failure should match ErrFailedToStart and unwrap to the raw error")
 	}
 }
