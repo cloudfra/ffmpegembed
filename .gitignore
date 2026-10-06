@@ -57,9 +57,6 @@ go.work.sum
 # env file
 .env
 
-# Local task notes / scratch files
-prompt.txt
-
 # Note: intentionally does not match .terraform.lock.hcl, which should be
 # committed to pin provider versions/hashes for reproducible builds.
 .terraform/
@@ -95,9 +92,8 @@ web.cert
 web.key
 gha-creds-*.json
 
-# Generated gRPC/gateway code (protobuf message code is checked in as proto/*.pb.go).
-proto/*.pb.gw.go
-proto/*.swagger.json
+# Local task notes / scratch files
+prompt.txt
 
 # Embedded ffmpeg/ffprobe binaries are build inputs that `make ffembed` /
 # `make ffembed-host` download into this tree (see Makefile_ffmpeg.mk); they do

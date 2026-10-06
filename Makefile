@@ -20,7 +20,7 @@ REGISTRY = ghcr.io/cloudfra
 # generated code.
 PROTOS = proto/ffrun.pb.go
 TEST_ASSETS =
-ASSETS =
+ASSETS = $(PROTOS)
 GO_PACKAGE = github.com/cloudfra/ffmpegembed
 ALL_APPS = ffrun
 PRODUCTION=1
