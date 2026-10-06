@@ -472,3 +472,73 @@ func TestExampleFfmpegEncodeProgress(t *testing.T) {
 	t.Logf("progress: %d events, final percent=%.3f, final frame=%d",
 		len(percents), percents[len(percents)-1], lastFrame)
 }
+
+// TestEncodeFormats is an end-to-end check that the resolved ffmpeg can
+// actually produce the formats this library is expected to support. It
+// generates a minimal one-second source clip, encodes it to each format using
+// only the structured FfmpegArgs fields, and probes every output to confirm it
+// holds a video stream of the requested codec at the source dimensions.
+func TestEncodeFormats(t *testing.T) {
+	f := newAndSkip(t)
+	tmp := t.TempDir()
+	inPath := filepath.Join(tmp, "in.mov")
+
+	gen, err := f.Ffmpeg(&FfmpegArgs{RawArgs: []string{
+		"-y",
+		"-f", "lavfi", "-i", "testsrc=duration=1:size=160x120:rate=10",
+		"-an", "-c:v", "libx264", "-preset", "veryfast",
+		"-f", "mov", inPath,
+	}})
+	if err != nil {
+		t.Fatalf("Ffmpeg(generate): %v", err)
+	}
+	if err := gen.Wait(); err != nil {
+		t.Fatalf("Ffmpeg(generate).Wait: %v", err)
+	}
+
+	tests := []struct {
+		name      string
+		codec     string // FfmpegArgs.VideoCodec
+		output    string // output file name; the extension selects the container
+		wantCodec string // codec_name ffprobe reports for the result
+	}{
+		{name: "h264", codec: "libx264", output: "h264.mp4", wantCodec: "h264"},
+		{name: "h265", codec: "libx265", output: "h265.mp4", wantCodec: "hevc"},
+		{name: "av1", codec: "libaom-av1", output: "av1.mkv", wantCodec: "av1"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			outPath := filepath.Join(tmp, tc.output)
+			run, err := f.Ffmpeg(&FfmpegArgs{
+				Inputs:     []string{inPath},
+				Output:     outPath,
+				VideoCodec: tc.codec,
+				Overwrite:  true,
+			})
+			if err != nil {
+				t.Fatalf("Ffmpeg(%s): %v", tc.codec, err)
+			}
+			if err := run.Wait(); err != nil {
+				t.Fatalf("Ffmpeg(%s).Wait: %v", tc.codec, err)
+			}
+
+			res, err := f.Ffprobe(&FfProbeArgs{Input: outPath, SelectStreams: "v:0"})
+			if err != nil {
+				t.Fatalf("Ffprobe(%s): %v", tc.output, err)
+			}
+			if len(res.GetStreams()) != 1 {
+				t.Fatalf("%s has %d video streams; want 1", tc.output, len(res.GetStreams()))
+			}
+			vid := res.GetStreams()[0]
+			if vid.GetCodecName() != tc.wantCodec {
+				t.Errorf("%s codec = %q; want %q", tc.output, vid.GetCodecName(), tc.wantCodec)
+			}
+			if vid.GetWidth() != 160 || vid.GetHeight() != 120 {
+				t.Errorf("%s is %dx%d; want 160x120", tc.output, vid.GetWidth(), vid.GetHeight())
+			}
+			if d := res.GetFormat().GetDuration(); d <= 0 || d > 5 {
+				t.Errorf("%s duration = %v; want (0, 5]", tc.output, d)
+			}
+		})
+	}
+}
