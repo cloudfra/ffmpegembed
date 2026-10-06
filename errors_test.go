@@ -17,6 +17,8 @@ package ffmpegembed
 import (
 	"context"
 	"errors"
+	"io/fs"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -368,5 +370,32 @@ func TestRunErrorHint(t *testing.T) {
 	}
 	if !errors.Is(err, ErrFailedToStart) || !errors.Is(err, raw) {
 		t.Errorf("hinted start failure should match ErrFailedToStart and unwrap to the raw error")
+	}
+}
+
+// TestMissingLoaderHint verifies that a Linux "no such file or directory"
+// start failure for a binary that does exist is explained as a missing
+// dynamic loader, and that a genuinely missing binary gets no such hint.
+func TestMissingLoaderHint(t *testing.T) {
+	notExist := &fs.PathError{Op: "fork/exec", Path: "ffmpeg", Err: fs.ErrNotExist}
+	present := filepath.Join(t.TempDir(), "ffmpeg")
+	if err := os.WriteFile(present, []byte("binary"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	hint := missingLoaderHint("linux", present, notExist)
+	for _, want := range []string{"glibc", "Alpine", "static"} {
+		if !strings.Contains(hint, want) {
+			t.Errorf("missingLoaderHint(existing binary) = %q; want it to mention %q", hint, want)
+		}
+	}
+	if got := missingLoaderHint("linux", filepath.Join(t.TempDir(), "absent"), notExist); got != "" {
+		t.Errorf("missingLoaderHint(absent binary) = %q; want empty", got)
+	}
+	if got := missingLoaderHint("linux", present, fs.ErrPermission); got != "" {
+		t.Errorf("missingLoaderHint(permission error) = %q; want empty", got)
+	}
+	if got := missingLoaderHint("windows", present, notExist); got != "" {
+		t.Errorf("missingLoaderHint(windows) = %q; want empty", got)
 	}
 }
