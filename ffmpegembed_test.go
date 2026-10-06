@@ -213,6 +213,11 @@ func TestParseFfprobeEmptyAndUnstructured(t *testing.T) {
 // TestNewClose resolves via the embedded binary (present for the host platform)
 // and verifies the extracted binaries are created and cleaned up on Close.
 func TestNewEmbeddedResolutionAndClose(t *testing.T) {
+	if testing.Short() {
+		// Decoding the embedded xz archive takes many seconds under the race
+		// detector; the deflake run repeats the suite in short mode.
+		t.Skip("extracts the embedded archive; skipped in short mode")
+	}
 	f, err := New(&Args{}) // no external preference, no inline bytes
 	if err != nil {
 		t.Skipf("no embedded binary on host; skipping: %v", err)

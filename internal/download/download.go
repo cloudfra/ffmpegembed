@@ -16,9 +16,10 @@
 // have neither an embedded binary nor one installed.
 //
 // What is downloaded is fixed by manifest.json: one release version, and for
-// each <goos>_<goarch> the gzip-compressed ffmpeg and ffprobe assets of that
-// release with their SHA-256 digests. A download is only used when its digest
-// matches, and is then cached so it happens once per version. To move to
+// each <goos>_<goarch> the gzip-compressed ffmpeg, ffprobe and license assets
+// of that release with their SHA-256 digests. A download is only used when its
+// digest matches, and is then cached so it happens once per version. The
+// license text is always stored next to the binaries. To move to
 // another release, run scripts/update-ffmpeg.sh, which rewrites the manifest.
 package download
 
@@ -47,6 +48,13 @@ var (
 	ErrChecksum = errors.New("checksum mismatch")
 )
 
+// LicenseFile is the name the license text of the ffmpeg/ffprobe build is
+// stored under, in the same directory as the binaries.
+const LicenseFile = "ffmpeg-LICENSE.txt"
+
+// licenseAsset is the key of the license text in a platform's assets.
+const licenseAsset = "license"
+
 // maxSize bounds both a downloaded asset and a decompressed binary, so a
 // misbehaving server or a corrupt archive cannot fill the disk.
 const maxSize = 1 << 30
@@ -61,6 +69,9 @@ type Asset struct {
 	File string `json:"file"`
 	// SHA256 is the lowercase hex SHA-256 digest of File.
 	SHA256 string `json:"sha256"`
+	// BinarySHA256 is the lowercase hex SHA-256 digest of File once
+	// decompressed. It ties the embedded copy of a binary to this release.
+	BinarySHA256 string `json:"binary_sha256,omitempty"`
 }
 
 // Manifest pins the release that is downloaded.
@@ -71,8 +82,8 @@ type Manifest struct {
 	License string `json:"license"`
 	// BaseURL is the URL prefix every Asset.File is fetched from.
 	BaseURL string `json:"base_url"`
-	// Platforms maps "<goos>_<goarch>" to its assets by binary name ("ffmpeg",
-	// "ffprobe").
+	// Platforms maps "<goos>_<goarch>" to its assets by name: the binaries
+	// "ffmpeg" and "ffprobe", and "license" for their license text.
 	Platforms map[string]map[string]Asset `json:"platforms"`
 }
 
@@ -103,46 +114,62 @@ type Fetcher struct {
 
 // Fetch returns the path of the named binary ("ffmpeg" or "ffprobe") for
 // goos/goarch, downloading and verifying it first unless it is already cached.
+// The build's license text is fetched the same way and kept beside it as
+// LicenseFile.
 func (f *Fetcher) Fetch(ctx context.Context, goos, goarch, name string) (string, error) {
 	asset, ok := f.Manifest.Asset(goos, goarch, name)
-	if !ok {
+	if !ok || name == licenseAsset {
 		return "", fmt.Errorf("%s for %s/%s (%s): %w", name, goos, goarch, f.Manifest.Version, ErrUnsupported)
 	}
 
 	dir := filepath.Join(f.CacheDir, f.Manifest.Version, goos+"_"+goarch)
+	if err := os.MkdirAll(dir, 0o750); err != nil {
+		return "", err
+	}
+	if license, ok := f.Manifest.Asset(goos, goarch, licenseAsset); ok {
+		if err := f.ensure(ctx, license, filepath.Join(dir, LicenseFile), 0o600); err != nil {
+			return "", err
+		}
+	}
 	path := filepath.Join(dir, name)
 	if goos == "windows" {
 		path += ".exe"
 	}
-	if fi, err := os.Stat(path); err == nil && fi.Mode().IsRegular() {
-		return path, nil
-	}
-	if err := os.MkdirAll(dir, 0o750); err != nil {
+	if err := f.ensure(ctx, asset, path, 0o700); err != nil {
 		return "", err
+	}
+	return path, nil
+}
+
+// ensure makes path hold the decompressed asset, downloading and verifying it
+// unless the file is already there.
+func (f *Fetcher) ensure(ctx context.Context, asset Asset, path string, perm os.FileMode) error {
+	if fi, err := os.Stat(path); err == nil && fi.Mode().IsRegular() {
+		return nil
 	}
 
 	// Download and unpack next to the destination, then rename into place, so
-	// a concurrent or interrupted Fetch never leaves a partial binary at path.
-	archive, err := f.download(ctx, dir, asset)
+	// a concurrent or interrupted Fetch never leaves a partial file at path.
+	archive, err := f.download(ctx, filepath.Dir(path), asset)
 	if err != nil {
-		return "", err
+		return err
 	}
 	defer os.Remove(archive) //nolint:errcheck // best-effort cleanup of a temp file
 
 	src, err := os.Open(archive) //nolint:gosec // G304: a temp file this function just created
 	if err != nil {
-		return "", err
+		return err
 	}
 	defer src.Close() //nolint:errcheck // read-only file
 
-	tmp := archive + ".bin"
-	if err := ExtractGzip(tmp, src); err != nil {
-		return "", fmt.Errorf("unpack %s: %w", asset.File, err)
+	tmp := archive + ".out"
+	if err := ExtractGzip(tmp, src, perm); err != nil {
+		return fmt.Errorf("unpack %s: %w", asset.File, err)
 	}
 	if err := os.Rename(tmp, path); err != nil {
-		return "", errors.Join(err, os.Remove(tmp))
+		return errors.Join(err, os.Remove(tmp))
 	}
-	return path, nil
+	return nil
 }
 
 // download saves asset into a new temp file in dir and returns its path once
@@ -193,14 +220,15 @@ func (f *Fetcher) download(ctx context.Context, dir string, asset Asset) (path s
 	return out.Name(), nil
 }
 
-// ExtractGzip decompresses the gzip stream src into an owner-executable file
-// at path, replacing any existing file. On failure the partial file is removed.
-func ExtractGzip(path string, src io.Reader) (err error) {
+// ExtractGzip decompresses the gzip stream src into a file at path created
+// with perm, replacing any existing file. On failure the partial file is
+// removed.
+func ExtractGzip(path string, src io.Reader, perm os.FileMode) (err error) {
 	zr, err := gzip.NewReader(src)
 	if err != nil {
 		return err
 	}
-	out, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o700) //nolint:gosec // G302,G304: an executable (owner-only) at a caller-chosen path
+	out, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, perm) //nolint:gosec // G302,G304: a caller-chosen path and mode (owner-only)
 	if err != nil {
 		return err
 	}

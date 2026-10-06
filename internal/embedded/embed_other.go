@@ -4,7 +4,7 @@
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+//	http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed by the user in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -16,10 +16,7 @@
 
 package embedded
 
-// This platform has no embedded binary: ffmpegGz/ffprobeGz are left nil and
+// This platform has no embedded binaries: archive is left nil and
 // HasEmbedded() is false. The resolver in the root package then falls back to
 // an ffmpeg/ffprobe on the system PATH or to a verified download.
-var (
-	ffmpegGz  []byte
-	ffprobeGz []byte
-)
+var archive []byte

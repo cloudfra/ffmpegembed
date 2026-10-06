@@ -15,6 +15,7 @@
 package ffmpegembed
 
 import (
+	"archive/tar"
 	"bytes"
 	"compress/gzip"
 	"crypto/sha256"
@@ -28,8 +29,46 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/ulikunitz/xz"
+
 	"github.com/cloudfra/ffmpegembed/internal/download"
+	"github.com/cloudfra/ffmpegembed/internal/embedded"
 )
+
+// tarXz returns a tar.xz archive laid out like the embedded one: ffmpeg and
+// ffprobe, both holding content, and a LICENSE.
+func tarXz(t *testing.T, content string) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	zw, err := xz.NewWriter(&buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tw := tar.NewWriter(zw)
+	for _, e := range []struct {
+		name string
+		mode int64
+		data string
+	}{
+		{embedded.Ffmpeg, 0o755, content},
+		{embedded.Ffprobe, 0o755, content},
+		{embedded.License, 0o644, "embedded license"},
+	} {
+		if err := tw.WriteHeader(&tar.Header{Name: e.name, Mode: e.mode, Size: int64(len(e.data)), Typeflag: tar.TypeReg}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := tw.Write([]byte(e.data)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return buf.Bytes()
+}
 
 // gzipBytes returns data gzip-compressed.
 func gzipBytes(t *testing.T, data []byte) []byte {
@@ -45,13 +84,13 @@ func gzipBytes(t *testing.T, data []byte) []byte {
 	return buf.Bytes()
 }
 
-// withEmbedded replaces the embedded binaries for the duration of the test;
+// withEmbedded replaces the embedded archive for the duration of the test;
 // nil simulates a platform that has none.
-func withEmbedded(t *testing.T, gz []byte) {
+func withEmbedded(t *testing.T, archive []byte) {
 	t.Helper()
-	old := embeddedBinary
-	embeddedBinary = func(string) []byte { return gz }
-	t.Cleanup(func() { embeddedBinary = old })
+	old := embeddedArchive
+	embeddedArchive = func() []byte { return archive }
+	t.Cleanup(func() { embeddedArchive = old })
 }
 
 // withInstalled makes PATH hold exactly one directory, containing placeholder
@@ -132,7 +171,7 @@ func TestResolveOrder(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			if tc.embedded {
-				withEmbedded(t, gzipBytes(t, []byte("embedded")))
+				withEmbedded(t, tarXz(t, "embedded"))
 			} else {
 				withEmbedded(t, nil)
 			}
@@ -217,5 +256,56 @@ func TestDownloadFailureIsErrNoBinary(t *testing.T) {
 	_, err := New(&Args{})
 	if !errors.Is(err, ErrNoBinary) || !errors.Is(err, download.ErrUnsupported) {
 		t.Fatalf("New error = %v; want ErrNoBinary wrapping download.ErrUnsupported", err)
+	}
+}
+
+// TestEmbeddedLicenseIsExtracted verifies the license text shipped in the
+// embedded archive is written next to the extracted binaries.
+func TestEmbeddedLicenseIsExtracted(t *testing.T) {
+	withEmbedded(t, tarXz(t, "embedded"))
+	withInstalled(t, false)
+
+	f, err := New(&Args{})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer f.Close() //nolint:errcheck // test cleanup
+	license := filepath.Join(filepath.Dir(f.FfmpegPath()), download.LicenseFile)
+	if got := readFile(t, license); got != "embedded license" {
+		t.Errorf("%s = %q; want the embedded license text", license, got)
+	}
+	if filepath.Dir(f.FfprobePath()) != filepath.Dir(f.FfmpegPath()) {
+		t.Errorf("ffmpeg (%s) and ffprobe (%s) were extracted to different directories", f.FfmpegPath(), f.FfprobePath())
+	}
+}
+
+// TestInlineBinaryIsNotOverwrittenByEmbedded verifies that when one binary is
+// supplied inline and the other comes from the embedded archive, extracting
+// the archive leaves the inline one in place.
+func TestInlineBinaryIsNotOverwrittenByEmbedded(t *testing.T) {
+	withEmbedded(t, tarXz(t, "embedded"))
+	withInstalled(t, false)
+
+	for _, tc := range []struct {
+		name                    string
+		args                    *Args
+		wantFfmpeg, wantFfprobe string
+	}{
+		{name: "inline ffmpeg", args: &Args{FfmpegBinary: []byte("inline")}, wantFfmpeg: "inline", wantFfprobe: "embedded"},
+		{name: "inline ffprobe", args: &Args{FfprobeBinary: []byte("inline")}, wantFfmpeg: "embedded", wantFfprobe: "inline"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f, err := New(tc.args)
+			if err != nil {
+				t.Fatalf("New: %v", err)
+			}
+			defer f.Close() //nolint:errcheck // test cleanup
+			if got := readFile(t, f.FfmpegPath()); got != tc.wantFfmpeg {
+				t.Errorf("ffmpeg is the %q binary; want %q", got, tc.wantFfmpeg)
+			}
+			if got := readFile(t, f.FfprobePath()); got != tc.wantFfprobe {
+				t.Errorf("ffprobe is the %q binary; want %q", got, tc.wantFfprobe)
+			}
+		})
 	}
 }

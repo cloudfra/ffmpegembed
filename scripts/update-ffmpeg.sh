@@ -17,21 +17,25 @@
 # Pins the ffmpeg/ffprobe builds this module ships and downloads to one
 # eugeneware/ffmpeg-static release.
 #
-# It downloads every platform's ffmpeg and ffprobe from that release and then:
+# It downloads every platform's ffmpeg, ffprobe and license text from that
+# release and then:
 #   * rewrites internal/download/manifest.json, the version -> URL + SHA-256
 #     mapping the library uses to download and verify a build at runtime;
-#   * replaces the gzip-compressed binaries committed under
-#     internal/embedded/bin/ (the go:embed inputs) for the embedded platforms,
-#     along with the license text of each build.
+#   * for the embedded platforms, replaces the archive committed under
+#     internal/embedded/bin/ (the go:embed input): one ffmpeg.tar.xz holding
+#     ffmpeg, ffprobe and their LICENSE, compressed with xz at its highest
+#     level. Both binaries go in one archive because they share most of their
+#     code, which a dictionary larger than one binary lets xz store only once.
 #
 # Usage: scripts/update-ffmpeg.sh [RELEASE_TAG]
 # RELEASE_TAG defaults to the version currently in the manifest, which makes a
 # bare run a way to re-fetch and re-verify what is already pinned.
 #
-# Review and commit the result. The embedded binaries are ordinary git blobs
-# (not Git LFS: the Go module proxy does not resolve LFS pointers, so LFS files
-# would reach `go get` users as pointer text), so every update permanently adds
-# about 120 MB to the repository history.
+# Needs curl, sha256sum, GNU tar and xz. Review and commit the result. The
+# embedded archives are ordinary git blobs (not Git LFS: the Go module proxy
+# does not resolve LFS pointers, so LFS files would reach `go get` users as
+# pointer text), so every update permanently adds about 45 MB to the
+# repository history.
 
 set -euo pipefail
 
@@ -54,6 +58,11 @@ PLATFORMS=(
 # Platforms whose binaries are committed and embedded. Keep in sync with the
 # embed_<goos>_<goarch>.go files in internal/embedded.
 EMBEDDED=(linux_amd64 windows_amd64)
+
+# xz at its highest level. The dictionary must be larger than one binary so the
+# second one in the archive can be matched against the first; it is also the
+# memory the decoder needs, so it is no larger than that requires.
+XZ_OPTS=(-9e "--lzma2=preset=9e,dict=96MiB" -T1)
 
 tag="${1:-}"
 if [[ -z "$tag" ]]; then
@@ -99,16 +108,26 @@ is_embedded() {
     fetch "ffprobe-$asset.gz"
     comma=','
     [[ "$i" == "$last" ]] && comma=''
+    fetch "$asset.LICENSE.gz"
+    gunzip -c "$work/ffmpeg-$asset.gz" > "$work/ffmpeg"
+    gunzip -c "$work/ffprobe-$asset.gz" > "$work/ffprobe"
+    gunzip -c "$work/$asset.LICENSE.gz" > "$work/LICENSE"
     echo "    \"$goplat\": {"
-    echo "      \"ffmpeg\": {\"file\": \"ffmpeg-$asset.gz\", \"sha256\": \"$(sha256 "$work/ffmpeg-$asset.gz")\"},"
-    echo "      \"ffprobe\": {\"file\": \"ffprobe-$asset.gz\", \"sha256\": \"$(sha256 "$work/ffprobe-$asset.gz")\"}"
+    echo "      \"ffmpeg\": {\"file\": \"ffmpeg-$asset.gz\", \"sha256\": \"$(sha256 "$work/ffmpeg-$asset.gz")\", \"binary_sha256\": \"$(sha256 "$work/ffmpeg")\"},"
+    echo "      \"ffprobe\": {\"file\": \"ffprobe-$asset.gz\", \"sha256\": \"$(sha256 "$work/ffprobe-$asset.gz")\", \"binary_sha256\": \"$(sha256 "$work/ffprobe")\"},"
+    echo "      \"license\": {\"file\": \"$asset.LICENSE.gz\", \"sha256\": \"$(sha256 "$work/$asset.LICENSE.gz")\", \"binary_sha256\": \"$(sha256 "$work/LICENSE")\"}"
     echo "    }$comma"
     if is_embedded "$goplat"; then
-      fetch "$asset.LICENSE.gz"
+      echo "  [ffmpeg] compressing $goplat" >&2
       mkdir -p "$EMBED_DIR/$goplat"
-      cp "$work/ffmpeg-$asset.gz" "$EMBED_DIR/$goplat/ffmpeg.gz"
-      cp "$work/ffprobe-$asset.gz" "$EMBED_DIR/$goplat/ffprobe.gz"
-      gunzip -c "$work/$asset.LICENSE.gz" > "$EMBED_DIR/$goplat/LICENSE"
+      rm -f "$EMBED_DIR/$goplat"/*.gz
+      chmod 0755 "$work/ffmpeg" "$work/ffprobe"
+      chmod 0644 "$work/LICENSE"
+      # Fixed order, timestamps and ownership keep the archive reproducible.
+      tar --format=ustar --mtime='2000-01-01 00:00:00Z' --owner=0 --group=0 --numeric-owner \
+        -C "$work" -cf "$work/ffmpeg.tar" ffmpeg ffprobe LICENSE
+      xz "${XZ_OPTS[@]}" -c "$work/ffmpeg.tar" > "$EMBED_DIR/$goplat/ffmpeg.tar.xz"
+      cp "$work/LICENSE" "$EMBED_DIR/$goplat/LICENSE"
     fi
   done
   echo '  }'

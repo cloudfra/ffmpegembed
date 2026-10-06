@@ -37,7 +37,7 @@
 // The ffmpeg/ffprobe used are resolved, in priority order, per binary:
 //  1. an inline override supplied via Args (FfmpegBinary / FfprobeBinary);
 //  2. the embedded static binary linked into this build (linux/amd64 and
-//     windows/amd64);
+//     windows/amd64), decompressed from an xz archive;
 //  3. a binary installed on the system PATH;
 //  4. a pinned static build, downloaded once into the user cache directory and
 //     verified against a compiled-in SHA-256 digest.
@@ -49,10 +49,12 @@
 // When bytes had to be written to disk (cases 1 and 2), they are extracted to
 // a private temp directory that Close() removes. If Args.WorkDir is set, that
 // directory is used instead and Close() leaves it in place.
+//
+// The embedded and downloaded builds are GPL-licensed; their license text is
+// always written next to the binaries as "ffmpeg-LICENSE.txt".
 package ffmpegembed
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -97,17 +99,9 @@ const downloadTimeout = 10 * time.Minute
 // These are variables so tests can simulate a platform with no embedded
 // binary and point the downloader at a local server.
 var (
-	// embeddedBinary returns the gzip-compressed embedded binary for name, or
-	// nil when this build has none.
-	embeddedBinary = func(name string) []byte {
-		switch name {
-		case "ffmpeg":
-			return embedded.Ffmpeg()
-		case "ffprobe":
-			return embedded.Ffprobe()
-		}
-		return nil
-	}
+	// embeddedArchive returns the embedded tar.xz of ffmpeg, ffprobe and
+	// their license, or nil when this build has none.
+	embeddedArchive = embedded.Archive
 
 	// newFetcher returns the downloader for the pinned build.
 	newFetcher = func() (*download.Fetcher, error) {
@@ -180,32 +174,60 @@ func New(args *Args) (*Ffexec, error) {
 		return p, nil
 	}
 
-	extractToDir := func(name string, gz []byte) (string, error) {
+	// extractEmbedded unpacks the embedded archive into the work directory
+	// the first time it is called. The archive holds both binaries and is
+	// decoded as a whole, so one call serves ffmpeg and ffprobe; a binary
+	// already resolved some other way (and so listed in resolved) is left
+	// alone. The license text is always written alongside.
+	resolved := map[string]bool{}
+	extracted := false
+	extractEmbedded := func(archive []byte) (string, error) {
 		d, err := ensureDir()
 		if err != nil {
 			return "", err
 		}
-		p := filepath.Join(d, exeName(name))
-		if err := download.ExtractGzip(p, bytes.NewReader(gz)); err != nil {
-			return "", fmt.Errorf("extract embedded %s: %w", name, err)
+		if extracted {
+			return d, nil
 		}
-		return p, nil
+		err = embedded.Extract(archive, d, func(entry string) string {
+			switch entry {
+			case embedded.Ffmpeg, embedded.Ffprobe:
+				if resolved[entry] {
+					return ""
+				}
+				return exeName(entry)
+			case embedded.License:
+				return download.LicenseFile
+			}
+			return ""
+		})
+		if err != nil {
+			return "", fmt.Errorf("extract embedded ffmpeg: %w", err)
+		}
+		extracted = true
+		return d, nil
 	}
 
 	resolve := func(name string, inline []byte) (string, error) {
 		// 1. Inline override.
 		if len(inline) > 0 {
+			resolved[name] = true
 			return writeToDir(name, inline)
 		}
 		// An installed binary goes ahead of the embedded one only on request.
 		if args.GetUseExternalIfAvailable() {
 			if p, err := exec.LookPath(name); err == nil {
+				resolved[name] = true
 				return p, nil
 			}
 		}
 		// 2. Embedded.
-		if gz := embeddedBinary(name); len(gz) > 0 {
-			return extractToDir(name, gz)
+		if archive := embeddedArchive(); len(archive) > 0 {
+			d, err := extractEmbedded(archive)
+			if err != nil {
+				return "", err
+			}
+			return filepath.Join(d, exeName(name)), nil
 		}
 		// 3. Installed.
 		if p, err := exec.LookPath(name); err == nil {
