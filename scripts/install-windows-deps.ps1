@@ -28,7 +28,8 @@
 # which of the DLLs ffmpeg imports are present, so successive runs show whether
 # the machine is getting closer to being able to run ffmpeg.
 #
-# Safe to re-run: installed packages are skipped. Needs an elevated shell.
+# Safe to re-run: installed packages are skipped. Installing needs an elevated
+# shell; without one the installs are skipped and only the report is printed.
 
 [CmdletBinding()]
 param()
@@ -88,8 +89,16 @@ function Write-DllReport {
 Write-Host "  [deps] machine: $env:COMPUTERNAME"
 Write-Host "  [deps] Windows installation type: $InstallationType"
 
+$identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+$isAdmin = ([Security.Principal.WindowsPrincipal]$identity).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+Write-Host "  [deps] running as: $($identity.Name) (elevated: $isAdmin)"
+
 $rebootRequired = $false
-if (Install-ServerCoreAppCompatibility) { $rebootRequired = $true }
+if ($isAdmin) {
+    if (Install-ServerCoreAppCompatibility) { $rebootRequired = $true }
+} else {
+    Write-Host "::warning::$env:COMPUTERNAME: not elevated, skipping package installs (report only)"
+}
 
 Write-DllReport
 
