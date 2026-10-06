@@ -59,6 +59,35 @@ func TestCommittedBinariesMatchManifest(t *testing.T) {
 	}
 }
 
+// TestCommittedBinariesUseMaximumCompression verifies every committed binary
+// is a gzip stream written at the maximum compression level, which the gzip
+// header records in its XFL byte (RFC 1952: 2 means "maximum compression,
+// slowest algorithm"). These blobs are downloaded by everyone who fetches the
+// module, so a release compressed at a lower level should not be committed
+// as is.
+func TestCommittedBinariesUseMaximumCompression(t *testing.T) {
+	const (
+		xflOffset         = 8
+		xflMaxCompression = 2
+	)
+	for _, platform := range embeddedPlatforms {
+		for _, name := range []string{"ffmpeg", "ffprobe"} {
+			data, err := os.ReadFile(filepath.Join("bin", platform, name+".gz")) //nolint:gosec // G304: fixed paths within the package
+			if err != nil {
+				t.Errorf("%s/%s: %v", platform, name, err)
+				continue
+			}
+			if len(data) <= xflOffset || data[0] != 0x1f || data[1] != 0x8b {
+				t.Errorf("%s/%s: not a gzip stream", platform, name)
+				continue
+			}
+			if got := data[xflOffset]; got != xflMaxCompression {
+				t.Errorf("%s/%s: gzip XFL = %d; want %d (maximum compression)", platform, name, got, xflMaxCompression)
+			}
+		}
+	}
+}
+
 func TestHasEmbedded(t *testing.T) {
 	want := false
 	for _, platform := range embeddedPlatforms {
