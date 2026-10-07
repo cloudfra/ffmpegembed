@@ -36,12 +36,22 @@
 //
 // The ffmpeg/ffprobe used are resolved, in priority order, per binary:
 //  1. an inline override supplied via Args (FfmpegBinary / FfprobeBinary);
-//  2. a binary found on the system PATH (only when UseExternalIfAvailable);
-//  3. the embedded binary linked into this build.
+//  2. the embedded static binary linked into this build (linux/amd64 and
+//     windows/amd64), decompressed from an xz archive;
+//  3. a binary installed on the system PATH;
+//  4. a pinned static build, downloaded once into the user cache directory and
+//     verified against a compiled-in SHA-256 digest.
 //
-// When bytes had to be written to disk (cases 1 and 3), they are extracted to
+// Args.UseExternalIfAvailable moves the installed binary (3) ahead of the
+// embedded one (2). Args.DisableDownload turns off (4); leaving it enabled
+// accepts the license of the downloaded build (GPL-3.0-or-later).
+//
+// When bytes had to be written to disk (cases 1 and 2), they are extracted to
 // a private temp directory that Close() removes. If Args.WorkDir is set, that
 // directory is used instead and Close() leaves it in place.
+//
+// The embedded and downloaded builds are GPL-licensed; their license text is
+// always written next to the binaries as "ffmpeg-LICENSE.txt".
 package ffmpegembed
 
 import (
@@ -53,7 +63,9 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 
+	"github.com/cloudfra/ffmpegembed/internal/download"
 	"github.com/cloudfra/ffmpegembed/internal/embedded"
 	"github.com/cloudfra/ffmpegembed/proto"
 )
@@ -80,6 +92,42 @@ type (
 	// FfmpegState is an alias for the proto package's FfmpegState type.
 	FfmpegState = proto.FfmpegState
 )
+
+// downloadTimeout bounds the download of one binary when New has to fetch it.
+const downloadTimeout = 10 * time.Minute
+
+// These are variables so tests can simulate a platform with no embedded
+// binary and point the downloader at a local server.
+var (
+	// embeddedArchive returns the embedded tar.xz of ffmpeg, ffprobe and
+	// their license, or nil when this build has none.
+	embeddedArchive = embedded.Archive
+
+	// newFetcher returns the downloader for the pinned build.
+	newFetcher = func() (*download.Fetcher, error) {
+		m, err := download.Default()
+		if err != nil {
+			return nil, err
+		}
+		cache, err := os.UserCacheDir()
+		if err != nil {
+			cache = os.TempDir()
+		}
+		return &download.Fetcher{Manifest: m, CacheDir: filepath.Join(cache, "ffmpegembed")}, nil
+	}
+)
+
+// downloadBinary fetches the pinned build of name for the current platform
+// (or returns its cached path).
+func downloadBinary(name string) (string, error) {
+	f, err := newFetcher()
+	if err != nil {
+		return "", err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), downloadTimeout)
+	defer cancel()
+	return f.Fetch(ctx, runtime.GOOS, runtime.GOARCH, name)
+}
 
 // Ffexec is a handle to a resolved ffmpeg/ffprobe, created by New. It is
 // safe to call Ffprobe and Ffmpeg concurrently from multiple goroutines.
@@ -126,32 +174,77 @@ func New(args *Args) (*Ffexec, error) {
 		return p, nil
 	}
 
+	// extractEmbedded unpacks the embedded archive into the work directory
+	// the first time it is called. The archive holds both binaries and is
+	// decoded as a whole, so one call serves ffmpeg and ffprobe; a binary
+	// already resolved some other way (and so listed in resolved) is left
+	// alone. The license text is always written alongside.
+	resolved := map[string]bool{}
+	extracted := false
+	extractEmbedded := func(archive []byte) (string, error) {
+		d, err := ensureDir()
+		if err != nil {
+			return "", err
+		}
+		if extracted {
+			return d, nil
+		}
+		err = embedded.Extract(archive, d, func(entry string) string {
+			switch entry {
+			case embedded.Ffmpeg, embedded.Ffprobe:
+				if resolved[entry] {
+					return ""
+				}
+				return exeName(entry)
+			case embedded.License:
+				return download.LicenseFile
+			}
+			return ""
+		})
+		if err != nil {
+			return "", fmt.Errorf("extract embedded ffmpeg: %w", err)
+		}
+		extracted = true
+		return d, nil
+	}
+
 	resolve := func(name string, inline []byte) (string, error) {
 		// 1. Inline override.
 		if len(inline) > 0 {
+			resolved[name] = true
 			return writeToDir(name, inline)
 		}
-		// 2. External (only if requested) — a binary found on PATH.
+		// An installed binary goes ahead of the embedded one only on request.
 		if args.GetUseExternalIfAvailable() {
 			if p, err := exec.LookPath(name); err == nil {
+				resolved[name] = true
 				return p, nil
 			}
 		}
-		// 3. Embedded.
-		var b []byte
-		switch name {
-		case "ffmpeg":
-			b = embedded.Ffmpeg()
-		case "ffprobe":
-			b = embedded.Ffprobe()
-		default:
-			return "", fmt.Errorf("unknown binary %q", name)
+		// 2. Embedded.
+		if archive := embeddedArchive(); len(archive) > 0 {
+			d, err := extractEmbedded(archive)
+			if err != nil {
+				return "", err
+			}
+			return filepath.Join(d, exeName(name)), nil
 		}
-		if len(b) == 0 {
-			return "", fmt.Errorf("%s: %w for %s/%s (set UseExternalIfAvailable, supply %s bytes inline, or build with an embedded binary)",
-				name, ErrNoBinary, runtime.GOOS, runtime.GOARCH, name)
+		// 3. Installed.
+		if p, err := exec.LookPath(name); err == nil {
+			return p, nil
 		}
-		return writeToDir(name, b)
+		// 4. Download.
+		const fix = "install ffmpeg so that %[1]s is on PATH, or supply it via Args.FfmpegBinary/FfprobeBinary"
+		if args.GetDisableDownload() {
+			return "", fmt.Errorf("%[1]s: %[2]w for %[3]s/%[4]s: none is embedded for this platform, none was found on PATH, and Args.DisableDownload is set; to fix: "+fix+", or allow the download",
+				name, ErrNoBinary, runtime.GOOS, runtime.GOARCH)
+		}
+		p, err := downloadBinary(name)
+		if err != nil {
+			return "", fmt.Errorf("%[1]s: %[2]w for %[3]s/%[4]s: none is embedded for this platform, none was found on PATH, and downloading one failed: %[5]w; to fix: "+fix,
+				name, ErrNoBinary, runtime.GOOS, runtime.GOARCH, err)
+		}
+		return p, nil
 	}
 
 	// removeIfCreated removes the auto-created temp directory if resolution is

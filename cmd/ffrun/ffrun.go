@@ -63,6 +63,9 @@ Sub-commands:
 Global flags:
   -external     Prefer an ffmpeg/ffprobe found on PATH (default: true); fall
                 back to the embedded binary otherwise.
+  -no-download  Never download ffmpeg/ffprobe. Without it, a platform with no
+                embedded or installed binary downloads a pinned, checksum-
+                verified GPL-3.0-or-later build, which you thereby accept.
   -workdir DIR  Directory to extract the embedded binaries into. If empty a
                 temp dir is used and removed on exit.
 
@@ -90,6 +93,7 @@ func run(args []string) error {
 	g.Usage = func() { fmt.Fprint(os.Stderr, usageText) }
 	external := g.Bool("external", true, "prefer ffmpeg/ffprobe on PATH")
 	workDir := g.String("workdir", "", "directory to extract embedded binaries")
+	noDownload := g.Bool("no-download", false, "never download ffmpeg/ffprobe")
 
 	if err := g.Parse(args); err != nil {
 		if err == flag.ErrHelp {
@@ -108,6 +112,7 @@ func run(args []string) error {
 	ffexec, err := ffmpegembed.New(&ffmpegembed.Args{
 		UseExternalIfAvailable: *external,
 		WorkDir:                *workDir,
+		DisableDownload:        *noDownload,
 	})
 	if err != nil {
 		return fmt.Errorf("resolve ffmpeg/ffprobe: %w", err)

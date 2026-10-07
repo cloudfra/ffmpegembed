@@ -99,8 +99,9 @@ func (FfmpegState) EnumDescriptor() ([]byte, []int) {
 // Args configures how New resolves the ffmpeg/ffprobe executables.
 type Args struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// Prefer a ffmpeg/ffprobe found on the system over the embedded copies. When
-	// false (default) the embedded binaries are always extracted and used.
+	// Prefer a ffmpeg/ffprobe found on the system PATH over the embedded copies.
+	// When false (default) the embedded binaries are used when this build has
+	// them, and the system PATH is only consulted when it does not.
 	UseExternalIfAvailable bool `protobuf:"varint,1,opt,name=use_external_if_available,json=useExternalIfAvailable,proto3" json:"use_external_if_available,omitempty"`
 	// Inline binary override. When non-empty these bytes are used verbatim and
 	// written to a temp dir, taking precedence over both the embedded binary and
@@ -109,9 +110,16 @@ type Args struct {
 	FfprobeBinary []byte `protobuf:"bytes,3,opt,name=ffprobe_binary,json=ffprobeBinary,proto3" json:"ffprobe_binary,omitempty"`
 	// Directory to extract the embedded binaries into. When empty a fresh temp
 	// dir is created. When set, Close() will NOT remove it.
-	WorkDir       string `protobuf:"bytes,4,opt,name=work_dir,json=workDir,proto3" json:"work_dir,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	WorkDir string `protobuf:"bytes,4,opt,name=work_dir,json=workDir,proto3" json:"work_dir,omitempty"`
+	// Never download ffmpeg/ffprobe. By default, when there is neither an
+	// embedded binary for the platform nor one on the system PATH, a pinned,
+	// checksum-verified static build is downloaded and cached. Leaving this
+	// false therefore accepts the license of that build (GPL-3.0-or-later);
+	// set it to true to refuse both the download and that license, in which
+	// case New fails with ErrNoBinary instead.
+	DisableDownload bool `protobuf:"varint,5,opt,name=disable_download,json=disableDownload,proto3" json:"disable_download,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *Args) Reset() {
@@ -170,6 +178,13 @@ func (x *Args) GetWorkDir() string {
 		return x.WorkDir
 	}
 	return ""
+}
+
+func (x *Args) GetDisableDownload() bool {
+	if x != nil {
+		return x.DisableDownload
+	}
+	return false
 }
 
 // FfProbeArgs configures an Ffprobe call. Either set the structured fields or
@@ -1164,12 +1179,13 @@ var File_proto_ffrun_proto protoreflect.FileDescriptor
 
 const file_proto_ffrun_proto_rawDesc = "" +
 	"\n" +
-	"\x11proto/ffrun.proto\x12\x0ecloudfra.ffrun\"\xa8\x01\n" +
+	"\x11proto/ffrun.proto\x12\x0ecloudfra.ffrun\"\xd3\x01\n" +
 	"\x04Args\x129\n" +
 	"\x19use_external_if_available\x18\x01 \x01(\bR\x16useExternalIfAvailable\x12#\n" +
 	"\rffmpeg_binary\x18\x02 \x01(\fR\fffmpegBinary\x12%\n" +
 	"\x0effprobe_binary\x18\x03 \x01(\fR\rffprobeBinary\x12\x19\n" +
-	"\bwork_dir\x18\x04 \x01(\tR\aworkDir\"\x92\x02\n" +
+	"\bwork_dir\x18\x04 \x01(\tR\aworkDir\x12)\n" +
+	"\x10disable_download\x18\x05 \x01(\bR\x0fdisableDownload\"\x92\x02\n" +
 	"\vFfProbeArgs\x12\x14\n" +
 	"\x05input\x18\x01 \x01(\tR\x05input\x12\x1f\n" +
 	"\vshow_format\x18\x02 \x01(\bR\n" +
