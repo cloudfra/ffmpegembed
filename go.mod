@@ -16,4 +16,7 @@ module github.com/cloudfra/ffmpegembed
 
 go 1.25.0
 
-require google.golang.org/protobuf v1.36.12
+require (
+	github.com/ulikunitz/xz v0.5.17
+	google.golang.org/protobuf v1.36.12
+)

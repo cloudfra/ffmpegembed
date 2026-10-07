@@ -124,6 +124,73 @@ go build -o ffrun ./cmd/ffrun
 
 See `./ffrun help` for the full flag reference.
 
+## The `mkffmpegembed` tool
+
+`cmd/mkffmpegembed` builds the two inputs an embedded ffmpeg needs. Anyone can
+use it to package their own build of ffmpeg.
+
+```bash
+go install github.com/cloudfra/ffmpegembed/cmd/mkffmpegembed@latest
+```
+
+**An archive** is a `.tar.xz` holding `ffmpeg`, `ffprobe` and the `LICENSE`
+they are distributed under:
+
+```bash
+mkffmpegembed archive -ffmpeg ./ffmpeg -ffprobe ./ffprobe -license ./LICENSE -o ffmpeg.tar.xz
+```
+
+Both binaries go in one archive because they share most of their code: with a
+dictionary larger than one binary, xz stores that code once. Compression is
+done by the `xz` program at its highest setting (`-9e`), so `xz` must be
+installed; archives are decompressed in pure Go.
+
+**A manifest** is a JSON file that pins a release: where each platform's files
+are downloaded from, and the SHA-256 digests they must have.
+
+```bash
+mkffmpegembed manifest -version b6.1.1 -license GPL-3.0-or-later \
+    -base-url 'https://github.com/eugeneware/ffmpeg-static/releases/download/{version}' \
+    -platform linux_amd64=ffmpeg-linux-x64.gz,ffprobe-linux-x64.gz,linux-x64.LICENSE.gz \
+    -platform windows_amd64=ffmpeg-win32-x64.gz,ffprobe-win32-x64.gz,win32-x64.LICENSE.gz \
+    -o manifest.json
+```
+
+Each `-platform` names the ffmpeg, ffprobe and license files of one
+`<goos>_<goarch>`; every file must be a single gzip-compressed file under the
+base URL. The tool downloads each one and records its digests:
+
+```json
+{
+  "version": "b6.1.1",
+  "license": "GPL-3.0-or-later",
+  "base_url": "https://github.com/eugeneware/ffmpeg-static/releases/download/b6.1.1",
+  "platforms": {
+    "linux_amd64": {
+      "ffmpeg": {
+        "file": "ffmpeg-linux-x64.gz",
+        "sha256": "bfe8a8fc511530457b528c48d77b5737527b504a3797a9bc4866aeca69c2dffa",
+        "binary_sha256": "e7e7fb30477f717e6f55f9180a70386c62677ef8a4d4d1a5d948f4098aa3eb99"
+      }
+    }
+  }
+}
+```
+
+To move an existing manifest to another release, start from it; the platforms
+are kept and every digest is recomputed:
+
+```bash
+mkffmpegembed manifest -from manifest.json -version b7.0 -o manifest.json
+```
+
+An archive can also be built straight from a manifest, which downloads the
+platform's files and verifies them first:
+
+```bash
+mkffmpegembed archive -manifest manifest.json -platform linux_amd64 -o ffmpeg.tar.xz
+```
+
 ## Supported platforms
 
 | OS      | Arch  | Binaries                    | Source (master build)                            |
@@ -193,7 +260,10 @@ The `ffrun` CLI exposes the same: `ffrun version`.
 ├── progress.go        Parse ffmpeg -progress samples → proto.Progress
 ├── proto/             Protobuf messages (ffrun.proto + checked-in .pb.go)
 ├── internal/embedded/ go:embed per-platform binaries
-└── cmd/ffrun/         Showcase CLI
+├── internal/archive/  The tar.xz archive format: create + extract
+├── internal/manifest/ The JSON release manifest
+├── cmd/ffrun/         Showcase CLI
+└── cmd/mkffmpegembed/ Builds archives and manifests
 ```
 
 ## License
