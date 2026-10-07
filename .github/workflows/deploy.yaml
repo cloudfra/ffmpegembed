@@ -228,11 +228,6 @@ jobs:
           cache: false
       - name: System Information
         run: make system-info
-      - name: Install ffmpeg System Dependencies
-        # The runners are Windows Server Core, which lacks desktop/multimedia
-        # DLLs the embedded ffmpeg.exe imports (avicap32.dll, ...); without
-        # them every test that launches ffmpeg exits with 0xc0000135.
-        run: ./scripts/install-windows-deps.ps1
       - name: Clean
         run: make clean
       - name: Build Assets
@@ -246,6 +241,15 @@ jobs:
         # (internal/embedded/bin/windows_amd64/) are gitignored and downloaded
         # by ffembed-host — pull them before Lint or typecheck fails.
         run: make ffembed-host
+      - name: Probe ffmpeg system dependencies (report-only)
+        # The runners are Windows Server Core, which lacks desktop/multimedia
+        # DLLs the embedded ffmpeg.exe imports (avicap32.dll, ...); without
+        # them every test that launches ffmpeg exits with 0xc0000135.
+        # Runs AFTER `make ffembed-host` so the REAL ffmpeg.exe is on disk and
+        # its PE import table can be parsed (no more hardcoded DLL list).
+        # Report-only: no Add-WindowsCapability, no installs; ALWAYS exits 0
+        # so Lint/Test still run and surface the true launcher failure.
+        run: ./scripts/install-windows-deps.ps1
       - name: Lint
         run: make lint
       - name: Test
@@ -297,11 +301,6 @@ jobs:
           cache: false
       - name: System Information
         run: make system-info
-      - name: Install ffmpeg System Dependencies
-        # The runners are Windows Server Core, which lacks desktop/multimedia
-        # DLLs the embedded ffmpeg.exe imports (avicap32.dll, ...); without
-        # them every test that launches ffmpeg exits with 0xc0000135.
-        run: ./scripts/install-windows-deps.ps1
       - name: Clean
         run: make clean
       - name: Build Assets
@@ -315,6 +314,15 @@ jobs:
         # (internal/embedded/bin/windows_amd64/) are gitignored and downloaded
         # by ffembed-host — pull them before Lint or typecheck fails.
         run: make ffembed-host
+      - name: Probe ffmpeg system dependencies (report-only)
+        # The runners are Windows Server Core, which lacks desktop/multimedia
+        # DLLs the embedded ffmpeg.exe imports (avicap32.dll, ...); without
+        # them every test that launches ffmpeg exits with 0xc0000135.
+        # Runs AFTER `make ffembed-host` so the REAL ffmpeg.exe is on disk and
+        # its PE import table can be parsed (no more hardcoded DLL list).
+        # Report-only: no Add-WindowsCapability, no installs; ALWAYS exits 0
+        # so `make test` still runs and surfaces the true launcher failure.
+        run: ./scripts/install-windows-deps.ps1
       - name: Test
         run: make test
       - name: Clean
