@@ -127,3 +127,17 @@ func TestLookups(t *testing.T) {
 		t.Errorf("Keys = %q", got)
 	}
 }
+
+// TestDefault verifies the manifest compiled into the module parses and
+// validates, and covers the platforms that have an embedded archive.
+func TestDefault(t *testing.T) {
+	m, err := Default()
+	if err != nil {
+		t.Fatalf("Default: %v", err)
+	}
+	for _, key := range []string{"linux_amd64", "windows_amd64"} {
+		if _, ok := m.Platforms[key]; !ok {
+			t.Errorf("the default manifest has no platform %s", key)
+		}
+	}
+}

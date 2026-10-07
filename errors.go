@@ -38,8 +38,9 @@ import (
 var (
 	// ErrNoBinary is returned (wrapped) by New when no ffmpeg or ffprobe binary
 	// can be resolved for the current platform: no inline bytes supplied, no
-	// on-PATH binary found or permitted by UseExternalIfAvailable, and no
-	// embedded binary present.
+	// embedded binary present, none found on PATH, and the download either
+	// failed or was turned off with Args.DisableDownload. The message says
+	// which, and how to fix it.
 	ErrNoBinary = errors.New("ffmpegembed: no ffmpeg/ffprobe binary available")
 
 	// ErrInvalidArgs is returned (wrapped) when the arguments provided are

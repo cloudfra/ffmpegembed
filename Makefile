@@ -25,12 +25,8 @@ GO_PACKAGE = github.com/cloudfra/ffmpegembed
 ALL_APPS = ffrun
 PRODUCTION=1
 
-# Default entry point: build the app (which pulls the host's embedded binary).
+# Default entry point: build the app.
 .DEFAULT_GOAL := all
 
 include Makefile_ffmpeg.mk
 include Makefile_build.mk
-
-# Build entry points pull the current host's embedded ffmpeg/ffprobe first so
-# go:embed resolves. (Cross platforms are covered by `make ffembed`.)
-all: ffembed-host

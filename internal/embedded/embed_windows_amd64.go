@@ -18,10 +18,8 @@ package embedded
 
 import _ "embed"
 
-//go:embed bin/windows_amd64/ffmpeg.exe
-var ffmpeg []byte
-
-//go:embed bin/windows_amd64/ffprobe.exe
-var ffprobe []byte
-
-func init() { hasEmbedded = true }
+// The archive is built by mkffmpegembed (see `make ffembed-update`) and
+// committed under bin/windows_amd64.
+//
+//go:embed bin/windows_amd64/ffmpeg.tar.xz
+var data []byte

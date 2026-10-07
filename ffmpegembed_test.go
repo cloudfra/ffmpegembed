@@ -15,6 +15,7 @@
 package ffmpegembed
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -212,6 +213,11 @@ func TestParseFfprobeEmptyAndUnstructured(t *testing.T) {
 // TestNewClose resolves via the embedded binary (present for the host platform)
 // and verifies the extracted binaries are created and cleaned up on Close.
 func TestNewEmbeddedResolutionAndClose(t *testing.T) {
+	if testing.Short() {
+		// Decoding the embedded xz archive takes many seconds under the race
+		// detector; the deflake run repeats the suite in short mode.
+		t.Skip("extracts the embedded archive; skipped in short mode")
+	}
 	f, err := New(&Args{}) // no external preference, no inline bytes
 	if err != nil {
 		t.Skipf("no embedded binary on host; skipping: %v", err)
@@ -260,15 +266,7 @@ func TestNewEmbeddedResolutionAndClose(t *testing.T) {
 // TestFfexecVersion verifies Ffexec.Version()/FfprobeVersion() return a
 // non-empty "…version…" line for the resolved binaries.
 func TestFfexecVersion(t *testing.T) {
-	f, err := New(&Args{})
-	if err != nil {
-		t.Skipf("no ffmpeg/ffprobe available on host; skipping: %v", err)
-	}
-	defer func() {
-		if cerr := f.Close(); cerr != nil {
-			t.Errorf("Close: %v", cerr)
-		}
-	}()
+	f := newAndSkip(t)
 
 	ver, err := f.Version()
 	if err != nil {
@@ -318,20 +316,39 @@ func TestClampFraction(t *testing.T) {
 	}
 }
 
-// newAndSkip returns a fresh *Ffexec, or calls t.Skipf if no
-// ffmpeg/ffprobe binary can be resolved (embedded or system).
+// shared is the Ffexec handed out by newAndSkip. Resolving one means
+// decompressing the embedded ffmpeg and ffprobe, which is expensive (far more
+// so under the race detector), so the end-to-end tests share a single handle
+// that TestMain closes instead of each resolving their own.
+var shared struct {
+	once sync.Once
+	f    *Ffexec
+	err  error
+}
+
+// newAndSkip returns the shared Ffexec, resolving it on first use, and skips
+// the test when no ffmpeg/ffprobe can be resolved on the host. Tests must not
+// Close it.
 func newAndSkip(t *testing.T) *Ffexec {
 	t.Helper()
-	f, err := New(&Args{})
-	if err != nil {
-		t.Skipf("no ffmpeg/ffprobe resolvable on host; skip: %v", err)
+	shared.once.Do(func() { shared.f, shared.err = New(&Args{}) })
+	if shared.err != nil {
+		t.Skipf("no ffmpeg/ffprobe resolvable on host; skip: %v", shared.err)
 	}
-	t.Cleanup(func() {
-		if cerr := f.Close(); cerr != nil {
-			t.Errorf("Cleanup Close: %v", cerr)
+	return shared.f
+}
+
+// TestMain closes the shared Ffexec, removing its temp directory, once every
+// test has run.
+func TestMain(m *testing.M) {
+	code := m.Run()
+	if shared.f != nil {
+		if err := shared.f.Close(); err != nil {
+			fmt.Fprintf(os.Stderr, "closing shared Ffexec: %v\n", err)
+			code = 1
 		}
-	})
-	return f
+	}
+	os.Exit(code)
 }
 
 // TestExampleFfprobe is an end-to-end example: generate one second of lavfi

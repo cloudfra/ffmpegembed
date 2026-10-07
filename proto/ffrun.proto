@@ -24,8 +24,9 @@ option go_package = "github.com/cloudfra/ffmpegembed/proto";
 
 // Args configures how New resolves the ffmpeg/ffprobe executables.
 message Args {
-  // Prefer a ffmpeg/ffprobe found on the system over the embedded copies. When
-  // false (default) the embedded binaries are always extracted and used.
+  // Prefer a ffmpeg/ffprobe found on the system PATH over the embedded copies.
+  // When false (default) the embedded binaries are used when this build has
+  // them, and the system PATH is only consulted when it does not.
   bool use_external_if_available = 1;
   // Inline binary override. When non-empty these bytes are used verbatim and
   // written to a temp dir, taking precedence over both the embedded binary and
@@ -35,6 +36,13 @@ message Args {
   // Directory to extract the embedded binaries into. When empty a fresh temp
   // dir is created. When set, Close() will NOT remove it.
   string work_dir = 4;
+  // Never download ffmpeg/ffprobe. By default, when there is neither an
+  // embedded binary for the platform nor one on the system PATH, a pinned,
+  // checksum-verified static build is downloaded and cached. Leaving this
+  // false therefore accepts the license of that build (GPL-3.0-or-later);
+  // set it to true to refuse both the download and that license, in which
+  // case New fails with ErrNoBinary instead.
+  bool disable_download = 5;
 }
 
 // FfProbeArgs configures an Ffprobe call. Either set the structured fields or

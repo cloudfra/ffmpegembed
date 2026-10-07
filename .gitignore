@@ -95,7 +95,3 @@ gha-creds-*.json
 # Local task notes / scratch files
 prompt.txt
 
-# Embedded ffmpeg/ffprobe binaries are build inputs that `make ffembed` /
-# `make ffembed-host` download into this tree (see Makefile_ffmpeg.mk); they do
-# not live under version control.
-/internal/embedded/bin/
