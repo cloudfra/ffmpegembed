@@ -18,13 +18,8 @@ package embedded
 
 import _ "embed"
 
-// ffmpeg and ffprobe are downloaded into bin/linux_amd64 by the Makefile
-// (Makefile_ffmpeg.mk) prior to compilation and embedded below.
+// The archive is built by mkffmpegembed (see `make ffembed-update`) and
+// committed under bin/linux_amd64.
 //
-//go:embed bin/linux_amd64/ffmpeg
-var ffmpeg []byte
-
-//go:embed bin/linux_amd64/ffprobe
-var ffprobe []byte
-
-func init() { hasEmbedded = true }
+//go:embed bin/linux_amd64/ffmpeg.tar.xz
+var data []byte

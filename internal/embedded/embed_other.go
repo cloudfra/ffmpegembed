@@ -12,15 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//go:build !((linux && (amd64 || arm64 || 386 || arm)) || (windows && (amd64 || arm64)) || (darwin && (amd64 || arm64)))
+//go:build !((linux || windows) && amd64)
 
 package embedded
 
-// This platform has no embedded binary. ffmpeg/ffprobe are left nil and
-// HasEmbedded() stays false; the library can still run if an ffmpeg/ffprobe is
-// available on the system (or supplied inline via Args), which the resolver in
-// the root package handles.
-var (
-	ffmpeg  []byte
-	ffprobe []byte
-)
+// This platform has no embedded archive: data is left nil, so Get returns
+// nil, and the resolver in the root package falls back to an ffmpeg/ffprobe on
+// the system PATH or to a verified download.
+var data []byte

@@ -78,11 +78,6 @@ jobs:
         run: make deps
       - name: Install Toolchain
         run: make tools -j"$(nproc)"
-      - name: Download embedded binaries (host)
-        # Lint/test/coverage compile the host package, whose go:embed inputs
-        # (internal/embedded/bin/<host>/) are gitignored and downloaded by
-        # ffembed-* — pull the host's before they're needed or typecheck fails.
-        run: make ffembed-host
       - name: Lint
         run: make lint
       - name: Test
@@ -128,12 +123,6 @@ jobs:
             benchmark.html
           retention-days: 7
           if-no-files-found: error
-
-      # `make all` cross-compiles several GOOS/GOARCH, so beyond the host
-      # (fetched before Lint) it needs each target's embedded binary too, or
-      # go:embed fails to resolve for those targets — pull them all.
-      - name: Download embedded binaries (all platforms)
-        run: make ffembed
 
       - name: Build Binaries
         run: make all -j"$(nproc)"
@@ -241,11 +230,6 @@ jobs:
         run: make deps
       - name: Install Toolchain
         run: make tools -j"$(nproc)"
-      - name: Download embedded binaries (host)
-        # Lint/test/coverage compile the host package, whose go:embed inputs
-        # (internal/embedded/bin/windows_amd64/) are gitignored and downloaded
-        # by ffembed-host — pull them before Lint or typecheck fails.
-        run: make ffembed-host
       - name: Lint
         run: make lint
       - name: Test
