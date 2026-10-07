@@ -39,7 +39,7 @@ post-install step or build script to run.
 `New` picks the `ffmpeg` and `ffprobe` to run in this order:
 
 1. **Embedded** — the static binary linked into your build (`linux/amd64`,
-   `windows/amd64`).
+   `windows/amd64`), decompressed from an xz archive when `New` is called.
 2. **Installed** — an `ffmpeg`/`ffprobe` found on `PATH`.
 3. **Downloaded** — a pinned static build, fetched once into the user cache
    directory (`os.UserCacheDir()/ffmpegembed/<version>/`) and used only if it
@@ -57,6 +57,12 @@ The embedded and downloaded builds are licensed **GPL-3.0-or-later** (see
 the downloaded build; set it to refuse both the download and the license.
 `Args.FfmpegBinary`/`FfprobeBinary` override all of the above with bytes you
 supply.
+
+The license text of the embedded or downloaded build is always written next to
+`ffmpeg` and `ffprobe`, as `ffmpeg-LICENSE.txt`.
+
+Extracting the embedded binaries decodes the whole archive: expect `New` to
+take a second or two and to use about 220 MB of memory while it runs.
 
 ## Quick start
 
@@ -167,25 +173,31 @@ Every build comes from one pinned release of
 builds are fully static, so they also run on musl-based and libc-free images
 such as Alpine and `distroless/static`.
 
-Only two platforms are embedded because the binaries are committed to the
-repository gzip-compressed (about 29 MB each, 118 MB in total) and a Go module
-may not exceed 500 MB. They are plain git blobs rather than Git LFS objects:
-the Go module proxy does not resolve LFS pointers, so `go get` would receive
-pointer files instead of binaries.
+Each embedded platform is one archive, `internal/embedded/bin/<os>_<arch>/ffmpeg.tar.xz`,
+holding `ffmpeg`, `ffprobe` and their license. It is compressed with xz at its
+highest level, with a dictionary larger than one binary so that the code the
+two programs share is stored once: about 23 MB per platform instead of 160 MB
+uncompressed. It is decoded by the pure-Go
+[ulikunitz/xz](https://github.com/ulikunitz/xz).
+
+Only two platforms are embedded to keep the module small (46 MB for both); a Go
+module may not exceed 500 MB. The archives are plain git blobs rather than Git
+LFS objects: the Go module proxy does not resolve LFS pointers, so `go get`
+would receive pointer files instead of binaries.
 
 ### Updating the pinned ffmpeg release
 
 `internal/download/manifest.json` maps the pinned version to each platform's
-download URL and SHA-256 digest; the embedded binaries are the same files. To
-move to another release:
+download URL and SHA-256 digest; the embedded archives are built from the same
+files. To move to another release:
 
 ```bash
 make ffembed-update FF_VERSION=b6.1.1
 ```
 
-This re-downloads every platform's build, rewrites the manifest, and replaces
-the committed binaries. A test fails if the committed binaries and the manifest
-ever disagree.
+This re-downloads every platform's build, rewrites the manifest, and rebuilds
+the committed archives (it needs `curl`, `sha256sum`, GNU `tar` and `xz`). A
+test fails if the contents of the archives and the manifest ever disagree.
 
 ## Building
 
@@ -219,7 +231,7 @@ The `ffrun` CLI exposes the same: `ffrun version`.
 ├── ffprobe.go         Ffprobe structured parse (format + streams)
 ├── progress.go        Parse ffmpeg -progress samples → proto.Progress
 ├── proto/             Protobuf messages (ffrun.proto + checked-in .pb.go)
-├── internal/embedded/ go:embed per-platform binaries (committed, gzip)
+├── internal/embedded/ go:embed per-platform archives (committed, tar.xz)
 ├── internal/download/ Pinned-release manifest + verified downloader
 └── cmd/ffrun/         Showcase CLI
 ```
@@ -232,7 +244,8 @@ The library's own source code is licensed under the
 The `ffmpeg` and `ffprobe` binaries it embeds and downloads are separate
 programs built with GPL components and are licensed under the
 **GNU General Public License, version 3 or later**; the license text is in
-`internal/embedded/bin/<os>_<arch>/LICENSE`. A program built with this module
+`internal/embedded/bin/<os>_<arch>/LICENSE`, and is written next to the
+binaries wherever they are extracted or downloaded. A program built with this module
 for `linux/amd64` or `windows/amd64` contains those binaries, so distributing it
 means distributing GPL software and meeting the GPL's terms for it (such as
 offering the corresponding ffmpeg source).
