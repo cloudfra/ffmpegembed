@@ -28,6 +28,8 @@
 # which of the DLLs ffmpeg imports are present, so successive runs show whether
 # the machine is getting closer to being able to run ffmpeg.
 #
+# scripts/test-windows-deps.ps1 is the read-only check that CI runs.
+#
 # Safe to re-run: installed packages are skipped. Installing needs an elevated
 # shell; without one the installs are skipped and only the report is printed.
 
