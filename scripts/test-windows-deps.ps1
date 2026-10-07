@@ -22,8 +22,7 @@
 #   * on Server Core, the App Compatibility Feature on Demand is installed.
 #
 # Usage: scripts/test-windows-deps.ps1
-# Exits 0 when every check passes and 1 otherwise. A check that cannot be
-# decided (see Test-AppCompatibility) is reported but does not fail the run.
+# Exits 0 when every check passes and 1 otherwise.
 #
 # Runs without elevation, so it works under the GitHub Actions runner service.
 
@@ -72,10 +71,11 @@ function Test-RequiredDlls {
     }
 }
 
-# Returns 'Installed', 'NotInstalled', or 'Unknown' for the App Compatibility
+# Returns 'Installed' or 'NotInstalled' for the App Compatibility
 # Feature on Demand. Get-WindowsCapability gives the definitive answer but
 # needs elevation; without it the servicing package list in the registry,
-# which is readable by any user, is consulted instead.
+# which is readable by any user, is consulted instead, and failing that the
+# presence of programs the feature adds (explorer.exe, mmc.exe).
 function Get-AppCompatibilityState {
     try {
         $state = (Get-WindowsCapability -Online -Name $Capability).State
@@ -86,21 +86,36 @@ function Get-AppCompatibilityState {
         Write-Result 'info' 'Get-WindowsCapability' "unavailable: $($_.Exception.Message)"
     }
 
-    $packages = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\Packages'
+    $servicing = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing'
+    if (Test-Path "$servicing\RebootPending") {
+        Write-Result 'info' 'servicing' 'REBOOT PENDING: a package install is waiting for a restart'
+    }
+    $found = @()
     try {
-        $found = @(Get-ChildItem $packages | Where-Object { $_.PSChildName -like '*AppCompat*FoD*' })
+        $found = @(Get-ChildItem "$servicing\Packages" | Where-Object { $_.PSChildName -like '*AppCompat*' })
     } catch {
         Write-Result 'info' 'servicing registry' "unavailable: $($_.Exception.Message)"
-        return 'Unknown'
     }
     $installed = $false
     foreach ($package in $found) {
-        # CurrentState 0x70 (112) is "Installed" in the servicing stack.
+        # CurrentState 0x70 (112) is "Installed" in the servicing stack; lower
+        # values are staged or pending states that still need a restart.
         $current = (Get-ItemProperty $package.PSPath).CurrentState
         Write-Result 'info' $package.PSChildName "CurrentState: $current"
         if ($current -eq 112) { $installed = $true }
     }
     if ($installed) { return 'Installed' }
+    if ($found.Count -gt 0) { return 'NotInstalled' }
+
+    # No package entry was recognized. Fall back to programs the feature adds
+    # to Server Core, which a minimal install does not have.
+    $markers = @('explorer.exe', 'mmc.exe') | ForEach-Object {
+        $path = if ($_ -eq 'explorer.exe') { Join-Path $env:WINDIR $_ } else { Join-Path $env:WINDIR "System32\$_" }
+        $present = Test-Path $path
+        Write-Result 'info' $_ $(if ($present) { 'present' } else { 'absent' })
+        $present
+    }
+    if ($markers -notcontains $false) { return 'Installed' }
     return 'NotInstalled'
 }
 
@@ -118,7 +133,6 @@ function Test-AppCompatibility {
             Write-Result 'MISSING' $Capability
             Add-Failure "$Capability is not installed (run scripts/install-windows-deps.ps1 elevated, then reboot)"
         }
-        default { Write-Result 'unknown' $Capability 'could not be determined without elevation' }
     }
 }
 
